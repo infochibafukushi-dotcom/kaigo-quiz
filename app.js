@@ -4,6 +4,7 @@ let courseIndex = 0;
 let unitIndex = 0;
 let questionIndex = 0;
 let lastResultShown = false;
+let editingImageData = "";
 
 const app = document.getElementById("app");
 const STORAGE_KEY = "kaigo_quiz_data";
@@ -157,6 +158,7 @@ function renderQuestion(){
   const q = currentQuestion();
   const percent = Math.round((questionIndex / unit.questions.length) * 100);
 
+  const questionImage = normalize(q.imageData || q.imageUrl || q.image || "");
   let html = `
     <div class="topbar">
       <div>
@@ -168,13 +170,8 @@ function renderQuestion(){
     <div class="progress"><div class="bar" style="width:${percent}%"></div></div>
     <div class="card">
       <span class="badge ${esc(q.type)}">${esc(labelType(q.type))}</span>
-      ${q.type === "image_fill"
-        ? `<div class="quiz-image-wrap">
-            <img class="quiz-image" src="${esc(q.image || "")}" alt="問題画像" onerror="this.style.display='none';this.nextElementSibling.style.display='block';">
-            <div class="quiz-image-fallback" style="display:none;">画像を表示できません。問題を作成者に確認してください。</div>
-          </div>`
-        : `<div class="quiz-question">${esc(q.type === "fill_multi" ? decorateFillMultiQuestion(q.question) : q.question)}</div>`
-      }
+      ${questionImage ? `<div class="quiz-image-wrap"><img class="quiz-image" src="${esc(questionImage)}" alt="問題画像" onerror="this.style.display='none';this.nextElementSibling.style.display='block';"><div class="quiz-image-fallback" style="display:none;">画像を表示できません。問題を作成者に確認してください。</div></div>` : ""}
+      ${q.question ? `<div class="quiz-question">${esc(q.type === "fill_multi" ? decorateFillMultiQuestion(q.question) : q.question)}</div>` : ""}
   `;
 
   if(q.type === "fill"){
@@ -457,6 +454,7 @@ function editQuestion(index){
   const isNew = index === null;
   const unit = db.courses[courseIndex].units[unitIndex];
   const q = isNew ? {type:"fill", question:"", answers:[""]} : unit.questions[index];
+  editingImageData = normalize(q.imageData || q.imageUrl || q.image || "");
 
   let html = `
     <div class="topbar">
@@ -481,8 +479,18 @@ function editQuestion(index){
       <label>問題文</label>
       <textarea id="editQuestion">${esc(q.question || "")}</textarea>
 
-      <label>問題画像パス（image_fill のみ）</label>
-      <input id="editImage" value="${esc(q.image || "")}" placeholder="/assets/questions/icf_q1.png">
+      <label>問題画像をアップロード</label>
+      <div class="image-upload-wrap">
+        <input id="editImageFile" class="hidden-file-input" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp">
+        <div id="imageDropZone" class="drop-zone" onclick="triggerImageSelect()" ondragover="handleImageDragOver(event)" ondragleave="handleImageDragLeave(event)" ondrop="handleImageDrop(event)">
+          <div class="drop-zone-title">問題画像をアップロード</div>
+          <div class="drop-zone-sub">ここに画像をドロップ、またはファイルを選択</div>
+        </div>
+        <div id="editImagePreview" class="image-preview ${editingImageData ? "" : "hidden"}">
+          <img id="editImagePreviewImg" src="${esc(editingImageData)}" alt="問題画像プレビュー">
+          <button type="button" class="danger small" onclick="clearUploadedImage()">画像削除</button>
+        </div>
+      </div>
 
       <label>空欄数（fill_multi / image_fill のみ）</label>
       <input id="editBlankCount" type="number" min="1" value="${esc(getQuestionBlankCount(q) || "")}" placeholder="8" oninput="renderAnswerInputsByBlankCount()">
@@ -507,7 +515,74 @@ function editQuestion(index){
     </div>
   `;
   app.innerHTML = html;
+  initImageUploader();
   renderAnswerInputsByBlankCount();
+}
+
+function triggerImageSelect(){
+  document.getElementById("editImageFile")?.click();
+}
+
+function handleImageDragOver(event){
+  event.preventDefault();
+  document.getElementById("imageDropZone")?.classList.add("dragover");
+}
+
+function handleImageDragLeave(event){
+  event.preventDefault();
+  document.getElementById("imageDropZone")?.classList.remove("dragover");
+}
+
+function handleImageDrop(event){
+  event.preventDefault();
+  document.getElementById("imageDropZone")?.classList.remove("dragover");
+  const file = event.dataTransfer?.files?.[0];
+  if(file) loadQuestionImageFile(file);
+}
+
+function initImageUploader(){
+  const input = document.getElementById("editImageFile");
+  if(!input) return;
+  input.addEventListener("change", (e) => {
+    const file = e.target.files?.[0];
+    if(file) loadQuestionImageFile(file);
+  });
+}
+
+function isAllowedImageType(file){
+  const type = (file.type || "").toLowerCase();
+  const name = (file.name || "").toLowerCase();
+  return ["image/jpeg","image/png","image/webp"].includes(type) || /\.(jpg|jpeg|png|webp)$/.test(name);
+}
+
+function loadQuestionImageFile(file){
+  if(!isAllowedImageType(file)) return alert("対応形式は jpg / jpeg / png / webp のみです");
+  const reader = new FileReader();
+  reader.onload = () => {
+    editingImageData = String(reader.result || "");
+    renderUploadedImagePreview();
+  };
+  reader.readAsDataURL(file);
+}
+
+function renderUploadedImagePreview(){
+  const preview = document.getElementById("editImagePreview");
+  const img = document.getElementById("editImagePreviewImg");
+  if(!preview || !img) return;
+  if(editingImageData){
+    img.src = editingImageData;
+    preview.classList.remove("hidden");
+  }else{
+    img.src = "";
+    preview.classList.add("hidden");
+  }
+}
+
+function clearUploadedImage(){
+  editingImageData = "";
+  const input = document.getElementById("editImageFile");
+  if(input) input.value = "";
+  renderUploadedImagePreview();
 }
 
 
@@ -567,7 +642,6 @@ function saveQuestion(index){
   const choices = document.getElementById("editChoices").value.split("\n").map(normalize).filter(Boolean);
   let answers = document.getElementById("editAnswers").value.split("\n").map(normalize).filter(Boolean);
 
-  const image = normalize(document.getElementById("editImage").value);
   const blankCount = Number(document.getElementById("editBlankCount").value) || 0;
   if(type === "fill_multi" || type === "image_fill"){
     answers = [...document.querySelectorAll("#editAnswersList input[data-answer-index]")].map(x => normalize(x.value));
@@ -578,17 +652,13 @@ function saveQuestion(index){
   if(answers.length === 0) return alert("正解を入力してください");
 
   let q = {type, question};
+  if(editingImageData) q.imageData = editingImageData;
   if(type === "fill" || type === "fill_multi"){
     if(type === "fill_multi") q.blankCount = blankCount;
     q.answers = answers;
   }else if(type === "image_fill"){
-    q.image = image;
     q.blankCount = blankCount;
     q.answers = answers;
-  }else if(type === "image_fill"){
-    q.image = image;
-    q.blanks = Math.max(blanks, answers.length);
-    q.correctAnswers = answers;
   }else if(type === "ox"){
     q.answer = answers[0];
   }else if(type === "choice"){
