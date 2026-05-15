@@ -219,3 +219,6 @@ textarea{min-height:90px;resize:vertical}
   .unit-title{font-size:20px}
   button{padding:10px 12px}
 }
+
+.fill-multi-row{display:block;font-weight:700;margin:8px 0}
+.fill-multi-row input{margin-top:4px}
