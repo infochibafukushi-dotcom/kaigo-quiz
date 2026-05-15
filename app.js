@@ -26,9 +26,11 @@ function loadLocalData(){
   }
 }
 
-function saveLocalData(){
+function saveLocalData(showAlert = true){
   localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
-  alert("保存しました");
+  if(showAlert){
+    alert("保存しました");
+  }
 }
 
 async function resetToInitialData(){
@@ -165,7 +167,7 @@ function renderQuestion(){
   }else if(q.type === "fill_multi"){
     const blankCount = Math.max(getFillMultiBlanks(q.question), q.answers.length);
     for(let i = 0; i < blankCount; i++){
-      html += `<label class="fill-multi-row">${esc(toCircledNumber(i + 1))}<input id="answerInput${i}" autocomplete="off" placeholder="答え ${i + 1}"></label>`;
+      html += `<label class="fill-multi-row">${esc(toCircledNumber(i + 1))}アンサー<input id="answerInput${i}" autocomplete="off" placeholder="${esc(toCircledNumber(i + 1))}アンサー"></label>`;
     }
     html += `<button onclick="checkFillMulti()">回答</button>`;
   }else if(q.type === "ox"){
@@ -361,6 +363,7 @@ function addCoursePrompt(){
   const title = prompt("大分類名");
   if(!normalize(title)) return;
   db.courses.push({title:normalize(title), units:[]});
+  saveLocalData(false);
   courseIndex = db.courses.length - 1;
   unitIndex = 0;
   renderAdmin();
@@ -370,6 +373,7 @@ function addUnitPrompt(){
   const title = prompt("単元名");
   if(!normalize(title)) return;
   db.courses[courseIndex].units.push({title:normalize(title), questions:[]});
+  saveLocalData(false);
   unitIndex = db.courses[courseIndex].units.length - 1;
   renderAdmin();
 }
@@ -380,6 +384,7 @@ function renameCourse(){
   const title = prompt("大分類名", c.title);
   if(!normalize(title)) return;
   c.title = normalize(title);
+  saveLocalData(false);
   renderAdmin();
 }
 
@@ -388,12 +393,14 @@ function renameUnit(i){
   const title = prompt("単元名", u.title);
   if(!normalize(title)) return;
   u.title = normalize(title);
+  saveLocalData(false);
   renderAdmin();
 }
 
 function deleteUnit(i){
   if(!confirm("この単元を削除しますか？")) return;
   db.courses[courseIndex].units.splice(i,1);
+  saveLocalData(false);
   unitIndex = 0;
   renderAdmin();
 }
@@ -509,12 +516,14 @@ function saveQuestion(index){
   }else{
     arr[index] = q;
   }
+  saveLocalData(false);
   renderAdmin();
 }
 
 function deleteQuestion(i){
   if(!confirm("この問題を削除しますか？")) return;
   db.courses[courseIndex].units[unitIndex].questions.splice(i,1);
+  saveLocalData(false);
   renderAdmin();
 }
 
@@ -523,6 +532,7 @@ function moveQuestion(i, dir){
   const ni = i + dir;
   if(ni < 0 || ni >= arr.length) return;
   [arr[i], arr[ni]] = [arr[ni], arr[i]];
+  saveLocalData(false);
   renderAdmin();
 }
 
@@ -545,6 +555,7 @@ function importJson(){
     const reader = new FileReader();
     reader.onload = () => {
       db = JSON.parse(reader.result);
+      saveLocalData(false);
       courseIndex = 0;
       unitIndex = 0;
       renderAdmin();
