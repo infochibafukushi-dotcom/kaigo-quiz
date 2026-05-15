@@ -1,15 +1,13 @@
 # カイゴクイズ
 
-GitHub Pages用の介護学習クイズWEBアプリです。
+介護福祉士実務者研修向けの一問一答WEBアプリです。
 
-## 使い方
-GitHub Pagesで `main / root` を選択してください。
+## GitHub Pages公開方法
 
-## ファイル
-- index.html
-- style.css
-- app.js
-- questions.json
+Settings → Pages → Deploy from a branch → main / root
 
-## 管理
-管理画面で編集後、JSON出力を押して `questions.json` としてGitHubへ上書きしてください。
+## 編集方法
+
+左上の「管理」から問題と答えを編集できます。
+
+GitHub Pagesは静的サイトのため、編集後は「JSON出力」を押して、出力された `questions.json` をGitHubへ上書きしてください。
