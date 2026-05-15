@@ -83,6 +83,14 @@ function getFillMultiBlanks(question){
   return matches.length;
 }
 
+function getQuestionBlankCount(q){
+  if(!q) return 0;
+  const fromField = Number(q.blankCount) || Number(q.blanks) || 0;
+  const fromQuestion = q.type === "fill_multi" ? getFillMultiBlanks(q.question) : 0;
+  const fromAnswers = getCorrectAnswers(q).length;
+  return Math.max(fromField, fromQuestion, fromAnswers);
+}
+
 function decorateFillMultiQuestion(question){
   const text = String(question || "");
   let idx = 0;
@@ -172,13 +180,13 @@ function renderQuestion(){
   if(q.type === "fill"){
     html += `<input id="answerInput" autocomplete="off" placeholder="答えを入力してEnter"><button onclick="checkFill()">回答</button>`;
   }else if(q.type === "fill_multi"){
-    const blankCount = Math.max(getFillMultiBlanks(q.question), q.answers.length);
+    const blankCount = getQuestionBlankCount(q);
     for(let i = 0; i < blankCount; i++){
       html += `<label class="fill-multi-row">${esc(toCircledNumber(i + 1))}アンサー<input id="answerInput${i}" autocomplete="off" placeholder="${esc(toCircledNumber(i + 1))}アンサー"></label>`;
     }
     html += `<button onclick="checkFillMulti()">回答</button>`;
   }else if(q.type === "image_fill"){
-    const blankCount = Math.max(Number(q.blanks) || 0, getCorrectAnswers(q).length);
+    const blankCount = getQuestionBlankCount(q);
     for(let i = 0; i < blankCount; i++){
       html += `<label class="fill-multi-row">${esc(toCircledNumber(i + 1))}<input id="answerInput${i}" autocomplete="off" placeholder="${esc(toCircledNumber(i + 1))}を入力"></label>`;
     }
@@ -245,7 +253,7 @@ function checkFill(){
 function checkFillMulti(){
   const q = currentQuestion();
   const answers = getCorrectAnswers(q);
-  const blankCount = Math.max(getFillMultiBlanks(q.question), answers.length);
+  const blankCount = getQuestionBlankCount(q);
   let ok = true;
 
   for(let i = 0; i < blankCount; i++){
@@ -260,7 +268,7 @@ function checkFillMulti(){
 function checkImageFill(){
   const q = currentQuestion();
   const answers = getCorrectAnswers(q);
-  const blankCount = Math.max(Number(q.blanks) || 0, answers.length);
+  const blankCount = getQuestionBlankCount(q);
   let ok = true;
   for(let i = 0; i < blankCount; i++){
     const input = document.getElementById(`answerInput${i}`);
@@ -386,7 +394,7 @@ function renderAdmin(){
 
 function answerText(q){
   if(q.type === "fill" || q.type === "fill_multi" || q.type === "multi") return (q.answers || []).join("、");
-  if(q.type === "image_fill") return (q.correctAnswers || []).join("、");
+  if(q.type === "image_fill") return (q.answers || []).join("、");
   return q.answer || "";
 }
 
@@ -461,7 +469,7 @@ function editQuestion(index){
 
     <div class="card">
       <label>形式</label>
-      <select id="editType">
+      <select id="editType" onchange="renderAnswerInputsByBlankCount()">
         <option value="fill" ${q.type==="fill"?"selected":""}>記述</option>
         <option value="fill_multi" ${q.type==="fill_multi"?"selected":""}>記述（複数空欄）</option>
         <option value="image_fill" ${q.type==="image_fill"?"selected":""}>画像穴埋め</option>
@@ -476,8 +484,8 @@ function editQuestion(index){
       <label>問題画像パス（image_fill のみ）</label>
       <input id="editImage" value="${esc(q.image || "")}" placeholder="/assets/questions/icf_q1.png">
 
-      <label>空欄数（image_fill のみ）</label>
-      <input id="editBlanks" type="number" min="1" value="${esc(q.blanks || "")}" placeholder="8">
+      <label>空欄数（fill_multi / image_fill のみ）</label>
+      <input id="editBlankCount" type="number" min="1" value="${esc(getQuestionBlankCount(q) || "")}" placeholder="8" oninput="renderAnswerInputsByBlankCount()">
 
       <label>選択肢（選択・複数選択のみ。1行に1つ）</label>
       <textarea id="editChoices">${esc((q.choices || []).join("\\n"))}</textarea>
@@ -487,7 +495,8 @@ function editQuestion(index){
       </div>
 
       <label>正解（1行に1つ。複数空欄は空欄順に入力。○×は ○ または ×）</label>
-      <textarea id="editAnswers">${esc(q.type==="choice" || q.type==="ox" ? (q.answer || "") : (q.type==="image_fill" ? (q.correctAnswers || []).join("\\n") : (q.answers || []).join("\\n")))}</textarea>
+      <textarea id="editAnswers" class="${q.type==="fill_multi" || q.type==="image_fill" ? "hidden" : ""}">${esc(q.type==="choice" || q.type==="ox" ? (q.answer || "") : (q.answers || []).join("\\n"))}</textarea>
+      <div id="editAnswersList"></div>
       <div class="row">
         <button type="button" class="secondary small" onclick="appendAnswer()">正解追加</button>
         <button type="button" class="danger small" onclick="removeAnswer()">正解削除</button>
@@ -498,6 +507,7 @@ function editQuestion(index){
     </div>
   `;
   app.innerHTML = html;
+  renderAnswerInputsByBlankCount();
 }
 
 
@@ -522,6 +532,26 @@ function removeChoice(){ removeLastLine("editChoices"); }
 function appendAnswer(){ appendLine("editAnswers", ""); }
 function removeAnswer(){ removeLastLine("editAnswers"); }
 
+function renderAnswerInputsByBlankCount(){
+  const typeEl = document.getElementById("editType");
+  const list = document.getElementById("editAnswersList");
+  const text = document.getElementById("editAnswers");
+  if(!typeEl || !list || !text) return;
+  const useList = typeEl.value === "fill_multi" || typeEl.value === "image_fill";
+  list.innerHTML = "";
+  if(!useList){
+    text.classList.remove("hidden");
+    return;
+  }
+  text.classList.add("hidden");
+  const savedAnswers = text.value.split("\n").map(normalize).filter(Boolean);
+  const blankCount = Math.max(Number(document.getElementById("editBlankCount")?.value) || 0, savedAnswers.length);
+  for(let i = 0; i < blankCount; i++){
+    const v = savedAnswers[i] || "";
+    list.innerHTML += `<label class="fill-multi-row">${esc(toCircledNumber(i + 1))}<input data-answer-index="${i}" value="${esc(v)}" placeholder="${esc(toCircledNumber(i + 1))}の正解"></label>`;
+  }
+}
+
 function appendFillMultiBlank(){
   const q = document.getElementById("editQuestion");
   if(q){
@@ -535,15 +565,25 @@ function saveQuestion(index){
   const type = document.getElementById("editType").value;
   const question = normalize(document.getElementById("editQuestion").value);
   const choices = document.getElementById("editChoices").value.split("\n").map(normalize).filter(Boolean);
-  const answers = document.getElementById("editAnswers").value.split("\n").map(normalize).filter(Boolean);
+  let answers = document.getElementById("editAnswers").value.split("\n").map(normalize).filter(Boolean);
 
   const image = normalize(document.getElementById("editImage").value);
-  const blanks = Number(document.getElementById("editBlanks").value) || 0;
+  const blankCount = Number(document.getElementById("editBlankCount").value) || 0;
+  if(type === "fill_multi" || type === "image_fill"){
+    answers = [...document.querySelectorAll("#editAnswersList input[data-answer-index]")].map(x => normalize(x.value));
+    if(answers.some(a => !a)) return alert("正解入力欄をすべて入力してください");
+    if(blankCount !== answers.length) return alert("空欄数と正解数が一致していません");
+  }
   if(type !== "image_fill" && !question) return alert("問題文を入力してください");
   if(answers.length === 0) return alert("正解を入力してください");
 
   let q = {type, question};
   if(type === "fill" || type === "fill_multi"){
+    if(type === "fill_multi") q.blankCount = blankCount;
+    q.answers = answers;
+  }else if(type === "image_fill"){
+    q.image = image;
+    q.blankCount = blankCount;
     q.answers = answers;
   }else if(type === "image_fill"){
     q.image = image;
