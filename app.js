@@ -68,6 +68,7 @@ function labelType(t){
   return {
     fill:"記述",
     fill_multi:"記述（複数空欄）",
+    image_fill:"画像穴埋め",
     ox:"○×",
     choice:"選択",
     multi:"複数選択"
@@ -159,7 +160,13 @@ function renderQuestion(){
     <div class="progress"><div class="bar" style="width:${percent}%"></div></div>
     <div class="card">
       <span class="badge ${esc(q.type)}">${esc(labelType(q.type))}</span>
-      <div class="quiz-question">${esc(q.type === "fill_multi" ? decorateFillMultiQuestion(q.question) : q.question)}</div>
+      ${q.type === "image_fill"
+        ? `<div class="quiz-image-wrap">
+            <img class="quiz-image" src="${esc(q.image || "")}" alt="問題画像" onerror="this.style.display='none';this.nextElementSibling.style.display='block';">
+            <div class="quiz-image-fallback" style="display:none;">画像を表示できません。問題を作成者に確認してください。</div>
+          </div>`
+        : `<div class="quiz-question">${esc(q.type === "fill_multi" ? decorateFillMultiQuestion(q.question) : q.question)}</div>`
+      }
   `;
 
   if(q.type === "fill"){
@@ -170,6 +177,12 @@ function renderQuestion(){
       html += `<label class="fill-multi-row">${esc(toCircledNumber(i + 1))}アンサー<input id="answerInput${i}" autocomplete="off" placeholder="${esc(toCircledNumber(i + 1))}アンサー"></label>`;
     }
     html += `<button onclick="checkFillMulti()">回答</button>`;
+  }else if(q.type === "image_fill"){
+    const blankCount = Math.max(Number(q.blanks) || 0, getCorrectAnswers(q).length);
+    for(let i = 0; i < blankCount; i++){
+      html += `<label class="fill-multi-row">${esc(toCircledNumber(i + 1))}<input id="answerInput${i}" autocomplete="off" placeholder="${esc(toCircledNumber(i + 1))}を入力"></label>`;
+    }
+    html += `<button onclick="checkImageFill()">回答</button>`;
   }else if(q.type === "ox"){
     html += `<div class="row"><button onclick="checkSingle('○')">○</button><button onclick="checkSingle('×')">×</button></div>`;
   }else if(q.type === "choice"){
@@ -193,9 +206,16 @@ function renderQuestion(){
       if(e.key === "Enter"){
         if(q.type === "fill") checkFill();
         if(q.type === "fill_multi") checkFillMulti();
+        if(q.type === "image_fill") checkImageFill();
       }
     });
   }
+}
+
+function getCorrectAnswers(q){
+  if(Array.isArray(q.correctAnswers)) return q.correctAnswers;
+  if(Array.isArray(q.answers)) return q.answers;
+  return q.answer ? [q.answer] : [];
 }
 
 function showResult(ok, ans){
@@ -217,23 +237,38 @@ function showResult(ok, ans){
 function checkFill(){
   const q = currentQuestion();
   const val = normalize(document.getElementById("answerInput").value);
-  const ok = val !== "" && q.answers.some(a => normalize(a) === val);
-  showResult(ok, q.answers);
+  const answers = getCorrectAnswers(q);
+  const ok = val !== "" && answers.some(a => normalize(a) === val);
+  showResult(ok, answers);
 }
 
 function checkFillMulti(){
   const q = currentQuestion();
-  const blankCount = Math.max(getFillMultiBlanks(q.question), q.answers.length);
+  const answers = getCorrectAnswers(q);
+  const blankCount = Math.max(getFillMultiBlanks(q.question), answers.length);
   let ok = true;
 
   for(let i = 0; i < blankCount; i++){
     const input = document.getElementById(`answerInput${i}`);
     const val = normalize(input ? input.value : "");
-    const ans = normalize(q.answers[i] || "");
+    const ans = normalize(answers[i] || "");
     if(val === "" || ans === "" || val !== ans) ok = false;
   }
+  showResult(ok, answers);
+}
 
-  showResult(ok, q.answers);
+function checkImageFill(){
+  const q = currentQuestion();
+  const answers = getCorrectAnswers(q);
+  const blankCount = Math.max(Number(q.blanks) || 0, answers.length);
+  let ok = true;
+  for(let i = 0; i < blankCount; i++){
+    const input = document.getElementById(`answerInput${i}`);
+    const val = normalize(input ? input.value : "");
+    const ans = normalize(answers[i] || "");
+    if(val === "" || ans === "" || val !== ans) ok = false;
+  }
+  showResult(ok, answers);
 }
 
 function checkSingle(v){
@@ -351,6 +386,7 @@ function renderAdmin(){
 
 function answerText(q){
   if(q.type === "fill" || q.type === "fill_multi" || q.type === "multi") return (q.answers || []).join("、");
+  if(q.type === "image_fill") return (q.correctAnswers || []).join("、");
   return q.answer || "";
 }
 
@@ -428,6 +464,7 @@ function editQuestion(index){
       <select id="editType">
         <option value="fill" ${q.type==="fill"?"selected":""}>記述</option>
         <option value="fill_multi" ${q.type==="fill_multi"?"selected":""}>記述（複数空欄）</option>
+        <option value="image_fill" ${q.type==="image_fill"?"selected":""}>画像穴埋め</option>
         <option value="ox" ${q.type==="ox"?"selected":""}>○×</option>
         <option value="choice" ${q.type==="choice"?"selected":""}>選択</option>
         <option value="multi" ${q.type==="multi"?"selected":""}>複数選択</option>
@@ -435,6 +472,12 @@ function editQuestion(index){
 
       <label>問題文</label>
       <textarea id="editQuestion">${esc(q.question || "")}</textarea>
+
+      <label>問題画像パス（image_fill のみ）</label>
+      <input id="editImage" value="${esc(q.image || "")}" placeholder="/assets/questions/icf_q1.png">
+
+      <label>空欄数（image_fill のみ）</label>
+      <input id="editBlanks" type="number" min="1" value="${esc(q.blanks || "")}" placeholder="8">
 
       <label>選択肢（選択・複数選択のみ。1行に1つ）</label>
       <textarea id="editChoices">${esc((q.choices || []).join("\\n"))}</textarea>
@@ -444,7 +487,7 @@ function editQuestion(index){
       </div>
 
       <label>正解（1行に1つ。複数空欄は空欄順に入力。○×は ○ または ×）</label>
-      <textarea id="editAnswers">${esc(q.type==="choice" || q.type==="ox" ? (q.answer || "") : (q.answers || []).join("\\n"))}</textarea>
+      <textarea id="editAnswers">${esc(q.type==="choice" || q.type==="ox" ? (q.answer || "") : (q.type==="image_fill" ? (q.correctAnswers || []).join("\\n") : (q.answers || []).join("\\n")))}</textarea>
       <div class="row">
         <button type="button" class="secondary small" onclick="appendAnswer()">正解追加</button>
         <button type="button" class="danger small" onclick="removeAnswer()">正解削除</button>
@@ -494,12 +537,18 @@ function saveQuestion(index){
   const choices = document.getElementById("editChoices").value.split("\n").map(normalize).filter(Boolean);
   const answers = document.getElementById("editAnswers").value.split("\n").map(normalize).filter(Boolean);
 
-  if(!question) return alert("問題文を入力してください");
+  const image = normalize(document.getElementById("editImage").value);
+  const blanks = Number(document.getElementById("editBlanks").value) || 0;
+  if(type !== "image_fill" && !question) return alert("問題文を入力してください");
   if(answers.length === 0) return alert("正解を入力してください");
 
   let q = {type, question};
   if(type === "fill" || type === "fill_multi"){
     q.answers = answers;
+  }else if(type === "image_fill"){
+    q.image = image;
+    q.blanks = Math.max(blanks, answers.length);
+    q.correctAnswers = answers;
   }else if(type === "ox"){
     q.answer = answers[0];
   }else if(type === "choice"){
