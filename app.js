@@ -6,38 +6,90 @@ let questionIndex = 0;
 let lastResultShown = false;
 
 const app = document.getElementById("app");
-const STORAGE_KEY = "kaigo_quiz_data";
+const ADMIN_CONFIG_KEY = "kaigo_quiz_admin_config";
 
 async function loadData(){
-  const res = await fetch("questions.json?ts=" + Date.now());
-  db = await res.json();
-  const saved = loadLocalData();
-  if(saved) db = saved;
+  const remote = await loadRemoteData();
+  if(remote){
+    db = remote;
+  }else{
+    const res = await fetch("questions.json?ts=" + Date.now());
+    db = await res.json();
+  }
   renderUnits(0);
 }
 
-function loadLocalData(){
+
+function loadAdminConfig(){
   try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if(!raw) return null;
-    return JSON.parse(raw);
+    const raw = localStorage.getItem(ADMIN_CONFIG_KEY);
+    if(!raw) return {remoteEndpoint:"", remoteApiKey:""};
+    const conf = JSON.parse(raw);
+    return {
+      remoteEndpoint: normalize(conf.remoteEndpoint || ""),
+      remoteApiKey: normalize(conf.remoteApiKey || "")
+    };
   }catch(e){
+    return {remoteEndpoint:"", remoteApiKey:""};
+  }
+}
+
+function saveAdminConfig(config){
+  localStorage.setItem(ADMIN_CONFIG_KEY, JSON.stringify(config));
+}
+
+function getRemoteConfig(){
+  const conf = loadAdminConfig();
+  return conf.remoteEndpoint ? conf : null;
+}
+
+async function loadRemoteData(){
+  const conf = getRemoteConfig();
+  if(!conf) return null;
+  try{
+    const headers = {};
+    if(conf.remoteApiKey) headers["x-api-key"] = conf.remoteApiKey;
+    const res = await fetch(conf.remoteEndpoint + "?ts=" + Date.now(), {headers});
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  }catch(e){
+    console.warn("remote load failed", e);
     return null;
   }
 }
 
-function saveLocalData(showAlert = true){
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
-  if(showAlert){
-    alert("保存しました");
+async function saveData(scope = "all", showAlert = true){
+  const conf = getRemoteConfig();
+  if(!conf){
+    alert("保存先設定が未設定です。GitHub保存APIを設定してください。");
+    return {ok:false, error:"missing_remote_config"};
   }
-}
 
-async function resetToInitialData(){
-  if(!confirm("初期データに戻しますか？")) return;
-  localStorage.removeItem(STORAGE_KEY);
-  await loadData();
-  alert("初期データに戻しました");
+  const payload = {
+    db,
+    scope,
+    courseIndex,
+    unitIndex,
+    savedAt: new Date().toISOString()
+  };
+
+  try{
+    const headers = {"Content-Type":"application/json"};
+    if(conf.remoteApiKey) headers["x-api-key"] = conf.remoteApiKey;
+    const res = await fetch(conf.remoteEndpoint, {
+      method:"POST",
+      headers,
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    if(showAlert) alert("GitHubへ保存しました");
+    return {ok:true, mode:"remote", data};
+  }catch(e){
+    console.error("github save failed", e);
+    if(showAlert) alert(`保存失敗: ${String(e)}`);
+    return {ok:false, error:String(e)};
+  }
 }
 
 function esc(s){
@@ -285,15 +337,16 @@ function renderAdmin(){
 
     <div class="card">
       <div class="row">
-        <button onclick="downloadJson()">JSON出力</button>
         <button class="secondary" onclick="importJson()">JSON読込</button>
         <button class="ok" onclick="addCoursePrompt()">大分類追加</button>
         <button class="ok" onclick="addUnitPrompt()">単元追加</button>
         <button class="secondary" onclick="renameCourse()">大分類名変更</button>
-        <button class="ok" onclick="saveLocalData()">保存</button>
+        <button class="ok" onclick="saveData('course')">保存（コース単位）</button>
+        <button class="ok" onclick="saveData('unit')">保存（単元単位）</button>
+        <button class="secondary" onclick="configureRemoteSave()">保存先設定</button>
         <button class="danger" onclick="resetToInitialData()">初期データに戻す</button>
       </div>
-      <div class="notice">GitHub Pagesではブラウザ内で直接サーバー保存できません。編集後にJSON出力し、questions.jsonをGitHubに上書きしてください。</div>
+      <div class="notice">保存ボタンは保存API経由で GitHub の questions.json を更新します。保存先設定で Worker API を設定してください。</div>
     </div>
 
     <div class="grid-admin">
@@ -363,7 +416,7 @@ function addCoursePrompt(){
   const title = prompt("大分類名");
   if(!normalize(title)) return;
   db.courses.push({title:normalize(title), units:[]});
-  saveLocalData(false);
+  saveData("course", false);
   courseIndex = db.courses.length - 1;
   unitIndex = 0;
   renderAdmin();
@@ -373,7 +426,7 @@ function addUnitPrompt(){
   const title = prompt("単元名");
   if(!normalize(title)) return;
   db.courses[courseIndex].units.push({title:normalize(title), questions:[]});
-  saveLocalData(false);
+  saveData("course", false);
   unitIndex = db.courses[courseIndex].units.length - 1;
   renderAdmin();
 }
@@ -384,7 +437,7 @@ function renameCourse(){
   const title = prompt("大分類名", c.title);
   if(!normalize(title)) return;
   c.title = normalize(title);
-  saveLocalData(false);
+  saveData("unit", false);
   renderAdmin();
 }
 
@@ -393,14 +446,14 @@ function renameUnit(i){
   const title = prompt("単元名", u.title);
   if(!normalize(title)) return;
   u.title = normalize(title);
-  saveLocalData(false);
+  saveData("unit", false);
   renderAdmin();
 }
 
 function deleteUnit(i){
   if(!confirm("この単元を削除しますか？")) return;
   db.courses[courseIndex].units.splice(i,1);
-  saveLocalData(false);
+  saveData("course", false);
   unitIndex = 0;
   renderAdmin();
 }
@@ -516,14 +569,14 @@ function saveQuestion(index){
   }else{
     arr[index] = q;
   }
-  saveLocalData(false);
+  saveData("unit", false);
   renderAdmin();
 }
 
 function deleteQuestion(i){
   if(!confirm("この問題を削除しますか？")) return;
   db.courses[courseIndex].units[unitIndex].questions.splice(i,1);
-  saveLocalData(false);
+  saveData("unit", false);
   renderAdmin();
 }
 
@@ -532,17 +585,8 @@ function moveQuestion(i, dir){
   const ni = i + dir;
   if(ni < 0 || ni >= arr.length) return;
   [arr[i], arr[ni]] = [arr[ni], arr[i]];
-  saveLocalData(false);
+  saveData("unit", false);
   renderAdmin();
-}
-
-function downloadJson(){
-  const blob = new Blob([JSON.stringify(db,null,2)], {type:"application/json"});
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "questions.json";
-  a.click();
-  URL.revokeObjectURL(a.href);
 }
 
 function importJson(){
@@ -555,7 +599,7 @@ function importJson(){
     const reader = new FileReader();
     reader.onload = () => {
       db = JSON.parse(reader.result);
-      saveLocalData(false);
+      saveData("all", false);
       courseIndex = 0;
       unitIndex = 0;
       renderAdmin();
@@ -563,6 +607,19 @@ function importJson(){
     reader.readAsText(file);
   };
   input.click();
+}
+
+
+function configureRemoteSave(){
+  const current = loadAdminConfig();
+  const endpoint = prompt("保存APIエンドポイントURL（未設定でローカル保存のみ）", current.remoteEndpoint || "");
+  if(endpoint === null) return;
+  const apiKey = prompt("APIキー（不要なら空欄）", current.remoteApiKey || "");
+  if(apiKey === null) return;
+  const conf = {remoteEndpoint: normalize(endpoint), remoteApiKey: normalize(apiKey)};
+  saveAdminConfig(conf);
+  alert(conf.remoteEndpoint ? "保存先を設定しました" : "保存先設定を解除しました（ローカル保存のみ）");
+  renderAdmin();
 }
 
 loadData();
