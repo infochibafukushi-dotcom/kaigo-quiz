@@ -924,6 +924,30 @@
               "answer": "○"
             }
           ]
+        },
+        {
+          "title": "障害の理解",
+          "questions": []
+        },
+        {
+          "title": "介護の基本",
+          "questions": []
+        },
+        {
+          "title": "コミュニケーション技術",
+          "questions": []
+        },
+        {
+          "title": "認知症の理解",
+          "questions": []
+        },
+        {
+          "title": "介護過程Ⅰ",
+          "questions": []
+        },
+        {
+          "title": "介護過程Ⅱ",
+          "questions": []
         }
       ]
     }
