@@ -6,11 +6,38 @@ let questionIndex = 0;
 let lastResultShown = false;
 
 const app = document.getElementById("app");
+const STORAGE_KEY = "kaigo_quiz_data";
 
 async function loadData(){
   const res = await fetch("questions.json?ts=" + Date.now());
   db = await res.json();
+  const saved = loadLocalData();
+  if(saved) db = saved;
   renderUnits(0);
+}
+
+function loadLocalData(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return null;
+    return JSON.parse(raw);
+  }catch(e){
+    return null;
+  }
+}
+
+function saveLocalData(showAlert = true){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+  if(showAlert){
+    alert("保存しました");
+  }
+}
+
+async function resetToInitialData(){
+  if(!confirm("初期データに戻しますか？")) return;
+  localStorage.removeItem(STORAGE_KEY);
+  await loadData();
+  alert("初期データに戻しました");
 }
 
 function esc(s){
@@ -45,6 +72,29 @@ function labelType(t){
     choice:"選択",
     multi:"複数選択"
   }[t] || t;
+}
+
+
+function getFillMultiBlanks(question){
+  const text = String(question || "");
+  const blankRegex = /（\s*　+\s*）/g;
+  const matches = text.match(blankRegex) || [];
+  return matches.length;
+}
+
+function decorateFillMultiQuestion(question){
+  const text = String(question || "");
+  let idx = 0;
+  return text.replace(/（\s*　+\s*）/g, () => {
+    idx += 1;
+    return `（${toCircledNumber(idx)}）`;
+  });
+}
+
+function toCircledNumber(n){
+  const base = 0x2460;
+  if(n >= 1 && n <= 20) return String.fromCharCode(base + (n - 1));
+  return `${n}`;
 }
 
 function renderUnits(ci = 0){
@@ -109,15 +159,16 @@ function renderQuestion(){
     <div class="progress"><div class="bar" style="width:${percent}%"></div></div>
     <div class="card">
       <span class="badge ${esc(q.type)}">${esc(labelType(q.type))}</span>
-      <div class="quiz-question">${esc(q.question)}</div>
+      <div class="quiz-question">${esc(q.type === "fill_multi" ? decorateFillMultiQuestion(q.question) : q.question)}</div>
   `;
 
   if(q.type === "fill"){
     html += `<input id="answerInput" autocomplete="off" placeholder="答えを入力してEnter"><button onclick="checkFill()">回答</button>`;
   }else if(q.type === "fill_multi"){
-    q.answers.forEach((_, i)=>{
-      html += `<input id="answerInput${i}" autocomplete="off" placeholder="答え ${i + 1}">`;
-    });
+    const blankCount = Math.max(getFillMultiBlanks(q.question), q.answers.length);
+    for(let i = 0; i < blankCount; i++){
+      html += `<label class="fill-multi-row">${esc(toCircledNumber(i + 1))}アンサー<input id="answerInput${i}" autocomplete="off" placeholder="${esc(toCircledNumber(i + 1))}アンサー"></label>`;
+    }
     html += `<button onclick="checkFillMulti()">回答</button>`;
   }else if(q.type === "ox"){
     html += `<div class="row"><button onclick="checkSingle('○')">○</button><button onclick="checkSingle('×')">×</button></div>`;
@@ -172,13 +223,15 @@ function checkFill(){
 
 function checkFillMulti(){
   const q = currentQuestion();
+  const blankCount = Math.max(getFillMultiBlanks(q.question), q.answers.length);
   let ok = true;
 
-  q.answers.forEach((ans, i)=>{
+  for(let i = 0; i < blankCount; i++){
     const input = document.getElementById(`answerInput${i}`);
     const val = normalize(input ? input.value : "");
-    if(val === "" || val !== normalize(ans)) ok = false;
-  });
+    const ans = normalize(q.answers[i] || "");
+    if(val === "" || ans === "" || val !== ans) ok = false;
+  }
 
   showResult(ok, q.answers);
 }
@@ -236,6 +289,9 @@ function renderAdmin(){
         <button class="secondary" onclick="importJson()">JSON読込</button>
         <button class="ok" onclick="addCoursePrompt()">大分類追加</button>
         <button class="ok" onclick="addUnitPrompt()">単元追加</button>
+        <button class="secondary" onclick="renameCourse()">大分類名変更</button>
+        <button class="ok" onclick="saveLocalData()">保存</button>
+        <button class="danger" onclick="resetToInitialData()">初期データに戻す</button>
       </div>
       <div class="notice">GitHub Pagesではブラウザ内で直接サーバー保存できません。編集後にJSON出力し、questions.jsonをGitHubに上書きしてください。</div>
     </div>
@@ -307,6 +363,7 @@ function addCoursePrompt(){
   const title = prompt("大分類名");
   if(!normalize(title)) return;
   db.courses.push({title:normalize(title), units:[]});
+  saveLocalData(false);
   courseIndex = db.courses.length - 1;
   unitIndex = 0;
   renderAdmin();
@@ -316,7 +373,18 @@ function addUnitPrompt(){
   const title = prompt("単元名");
   if(!normalize(title)) return;
   db.courses[courseIndex].units.push({title:normalize(title), questions:[]});
+  saveLocalData(false);
   unitIndex = db.courses[courseIndex].units.length - 1;
+  renderAdmin();
+}
+
+
+function renameCourse(){
+  const c = db.courses[courseIndex];
+  const title = prompt("大分類名", c.title);
+  if(!normalize(title)) return;
+  c.title = normalize(title);
+  saveLocalData(false);
   renderAdmin();
 }
 
@@ -325,12 +393,14 @@ function renameUnit(i){
   const title = prompt("単元名", u.title);
   if(!normalize(title)) return;
   u.title = normalize(title);
+  saveLocalData(false);
   renderAdmin();
 }
 
 function deleteUnit(i){
   if(!confirm("この単元を削除しますか？")) return;
   db.courses[courseIndex].units.splice(i,1);
+  saveLocalData(false);
   unitIndex = 0;
   renderAdmin();
 }
@@ -368,14 +438,54 @@ function editQuestion(index){
 
       <label>選択肢（選択・複数選択のみ。1行に1つ）</label>
       <textarea id="editChoices">${esc((q.choices || []).join("\\n"))}</textarea>
+      <div class="row">
+        <button type="button" class="secondary small" onclick="appendChoice()">選択肢追加</button>
+        <button type="button" class="danger small" onclick="removeChoice()">選択肢削除</button>
+      </div>
 
       <label>正解（1行に1つ。複数空欄は空欄順に入力。○×は ○ または ×）</label>
       <textarea id="editAnswers">${esc(q.type==="choice" || q.type==="ox" ? (q.answer || "") : (q.answers || []).join("\\n"))}</textarea>
+      <div class="row">
+        <button type="button" class="secondary small" onclick="appendAnswer()">正解追加</button>
+        <button type="button" class="danger small" onclick="removeAnswer()">正解削除</button>
+        <button type="button" class="secondary small" onclick="appendFillMultiBlank()">fill_multi 空欄追加</button>
+      </div>
 
       <button onclick="saveQuestion(${isNew ? "null" : index})">保存</button>
     </div>
   `;
   app.innerHTML = html;
+}
+
+
+function appendLine(id, text = ""){
+  const el = document.getElementById(id);
+  if(!el) return;
+  el.value = el.value ? `${el.value}\n${text}` : text;
+  el.focus();
+}
+
+function removeLastLine(id){
+  const el = document.getElementById(id);
+  if(!el) return;
+  const lines = el.value.split("\n");
+  lines.pop();
+  el.value = lines.join("\n");
+  el.focus();
+}
+
+function appendChoice(){ appendLine("editChoices", ""); }
+function removeChoice(){ removeLastLine("editChoices"); }
+function appendAnswer(){ appendLine("editAnswers", ""); }
+function removeAnswer(){ removeLastLine("editAnswers"); }
+
+function appendFillMultiBlank(){
+  const q = document.getElementById("editQuestion");
+  if(q){
+    q.value += "（　　　）";
+    q.focus();
+  }
+  appendAnswer();
 }
 
 function saveQuestion(index){
@@ -406,12 +516,14 @@ function saveQuestion(index){
   }else{
     arr[index] = q;
   }
+  saveLocalData(false);
   renderAdmin();
 }
 
 function deleteQuestion(i){
   if(!confirm("この問題を削除しますか？")) return;
   db.courses[courseIndex].units[unitIndex].questions.splice(i,1);
+  saveLocalData(false);
   renderAdmin();
 }
 
@@ -420,6 +532,7 @@ function moveQuestion(i, dir){
   const ni = i + dir;
   if(ni < 0 || ni >= arr.length) return;
   [arr[i], arr[ni]] = [arr[ni], arr[i]];
+  saveLocalData(false);
   renderAdmin();
 }
 
@@ -442,6 +555,7 @@ function importJson(){
     const reader = new FileReader();
     reader.onload = () => {
       db = JSON.parse(reader.result);
+      saveLocalData(false);
       courseIndex = 0;
       unitIndex = 0;
       renderAdmin();
