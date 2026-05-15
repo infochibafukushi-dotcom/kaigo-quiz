@@ -1,0 +1,36 @@
+:root{
+  --bg:#f4f7fb;--card:#fff;--text:#111827;--muted:#6b7280;--line:#e5e7eb;
+  --main:#2563eb;--main2:#1d4ed8;--ok:#16a34a;--ng:#dc2626;--warn:#f59e0b;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.65}
+.app{max-width:920px;margin:0 auto;padding:14px}
+.header{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:8px 0 14px}
+h1,h2,h3{line-height:1.35;margin:0 0 12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin:12px 0;box-shadow:0 4px 16px rgba(15,23,42,.05)}
+.list-card{cursor:pointer;transition:.15s}
+.list-card:active{transform:scale(.99)}
+.title{font-size:22px;font-weight:800}
+.sub{color:var(--muted);font-size:14px}
+button{border:0;border-radius:12px;background:var(--main);color:#fff;padding:11px 14px;font-weight:700;margin:4px;cursor:pointer}
+button:hover{background:var(--main2)}
+button.secondary{background:#e5e7eb;color:#111827}
+button.danger{background:var(--ng)}
+button.okbtn{background:var(--ok)}
+input,textarea,select{width:100%;border:1px solid #d1d5db;border-radius:12px;padding:12px;font-size:16px;margin:6px 0 10px;background:#fff}
+textarea{min-height:92px}
+.choice{display:block;width:100%;text-align:left;background:#fff;color:var(--text);border:1px solid var(--line);padding:14px;border-radius:14px;margin:8px 0}
+.choice:hover{background:#eff6ff}
+.result{font-size:20px;font-weight:900;padding:14px;border-radius:14px;margin:14px 0}
+.result.ok{background:#dcfce7;color:#166534}
+.result.ng{background:#fee2e2;color:#991b1b}
+.answer{font-size:16px;margin-top:8px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.progress{height:10px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin:10px 0}
+.bar{height:100%;background:var(--main);width:0%}
+.badge{display:inline-block;background:#eef2ff;color:#3730a3;border-radius:999px;padding:3px 9px;font-size:13px;font-weight:700}
+.small{font-size:13px;color:var(--muted)}
+hr{border:0;border-top:1px solid var(--line);margin:16px 0}
+label.check{display:block;background:#fff;border:1px solid var(--line);border-radius:12px;margin:8px 0;padding:12px}
+label.check input{width:auto;margin-right:8px}
+@media(max-width:600px){.app{padding:10px}.card{padding:14px}.title{font-size:20px}button{width:auto}.row button{flex:1}}
