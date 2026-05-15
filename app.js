@@ -47,6 +47,29 @@ function labelType(t){
   }[t] || t;
 }
 
+
+function getFillMultiBlanks(question){
+  const text = String(question || "");
+  const blankRegex = /（\s*　+\s*）/g;
+  const matches = text.match(blankRegex) || [];
+  return matches.length;
+}
+
+function decorateFillMultiQuestion(question){
+  const text = String(question || "");
+  let idx = 0;
+  return text.replace(/（\s*　+\s*）/g, () => {
+    idx += 1;
+    return `（${toCircledNumber(idx)}）`;
+  });
+}
+
+function toCircledNumber(n){
+  const base = 0x2460;
+  if(n >= 1 && n <= 20) return String.fromCharCode(base + (n - 1));
+  return `${n}`;
+}
+
 function renderUnits(ci = 0){
   courseIndex = ci;
   const c = db.courses[ci];
@@ -109,15 +132,16 @@ function renderQuestion(){
     <div class="progress"><div class="bar" style="width:${percent}%"></div></div>
     <div class="card">
       <span class="badge ${esc(q.type)}">${esc(labelType(q.type))}</span>
-      <div class="quiz-question">${esc(q.question)}</div>
+      <div class="quiz-question">${esc(q.type === "fill_multi" ? decorateFillMultiQuestion(q.question) : q.question)}</div>
   `;
 
   if(q.type === "fill"){
     html += `<input id="answerInput" autocomplete="off" placeholder="答えを入力してEnter"><button onclick="checkFill()">回答</button>`;
   }else if(q.type === "fill_multi"){
-    q.answers.forEach((_, i)=>{
-      html += `<input id="answerInput${i}" autocomplete="off" placeholder="答え ${i + 1}">`;
-    });
+    const blankCount = Math.max(getFillMultiBlanks(q.question), q.answers.length);
+    for(let i = 0; i < blankCount; i++){
+      html += `<label class="fill-multi-row">${esc(toCircledNumber(i + 1))}<input id="answerInput${i}" autocomplete="off" placeholder="答え ${i + 1}"></label>`;
+    }
     html += `<button onclick="checkFillMulti()">回答</button>`;
   }else if(q.type === "ox"){
     html += `<div class="row"><button onclick="checkSingle('○')">○</button><button onclick="checkSingle('×')">×</button></div>`;
@@ -172,13 +196,15 @@ function checkFill(){
 
 function checkFillMulti(){
   const q = currentQuestion();
+  const blankCount = Math.max(getFillMultiBlanks(q.question), q.answers.length);
   let ok = true;
 
-  q.answers.forEach((ans, i)=>{
+  for(let i = 0; i < blankCount; i++){
     const input = document.getElementById(`answerInput${i}`);
     const val = normalize(input ? input.value : "");
-    if(val === "" || val !== normalize(ans)) ok = false;
-  });
+    const ans = normalize(q.answers[i] || "");
+    if(val === "" || ans === "" || val !== ans) ok = false;
+  }
 
   showResult(ok, q.answers);
 }
