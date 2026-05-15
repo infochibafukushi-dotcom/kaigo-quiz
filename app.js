@@ -585,6 +585,10 @@ function saveQuestion(index){
     q.image = image;
     q.blankCount = blankCount;
     q.answers = answers;
+  }else if(type === "image_fill"){
+    q.image = image;
+    q.blanks = Math.max(blanks, answers.length);
+    q.correctAnswers = answers;
   }else if(type === "ox"){
     q.answer = answers[0];
   }else if(type === "choice"){
