@@ -914,12 +914,24 @@ async function saveQuestion(index){
 
 async function deleteQuestion(i){
   if(!confirm("この問題を削除しますか？")) return;
-  db.courses[courseIndex].units[unitIndex].questions.splice(i,1);
+  const questions = db.courses[courseIndex].units[unitIndex].questions;
+  const target = questions[i];
+  const id = Number(target?.id);
+  console.log("DELETE ID=", target?.id, "parsed=", id);
   try{
+    if(Number.isFinite(id) && id > 0){
+      const res = await fetch(`${API_BASE}/api/questions/${encodeURIComponent(id)}`, { method:"DELETE" });
+      if(!res.ok){
+        const body = await res.text();
+        alert(`削除に失敗しました (status=${res.status})\n${body || "(no response body)"}`);
+        return;
+      }
+    }
+    questions.splice(i,1);
     await saveLocalData(false);
     renderAdmin();
   }catch(e){
-    alert(`保存に失敗しました: ${e?.message || e}`);
+    alert(`削除に失敗しました: ${e?.message || e}`);
   }
 }
 
