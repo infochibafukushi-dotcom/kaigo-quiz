@@ -51,6 +51,42 @@ export default {
         return json({ ok: true }, cors);
       }
 
+
+      if (url.pathname === "/api/units" && request.method === "POST") {
+        const body = await request.json();
+        const course = String(body?.course || "").trim();
+        const title = String(body?.title || "").trim();
+        if (!course || !title) return json({ error: "course/title missing" }, cors, 400);
+        await env.DB.prepare(`
+          INSERT INTO units (course, title, is_visible)
+          VALUES (?, ?, 1)
+          ON CONFLICT(course, title) DO UPDATE SET
+            is_visible=excluded.is_visible,
+            updated_at=CURRENT_TIMESTAMP
+        `).bind(course, title).run();
+        const row = await env.DB.prepare("SELECT id, course, title, is_visible FROM units WHERE course = ? AND title = ?").bind(course, title).first();
+        if (!row?.id) return json({ error: "unit create failed" }, cors, 500);
+
+        const courseIdRow = await env.DB.prepare(`
+          SELECT MIN(id) AS course_id
+          FROM units
+          WHERE course = ?
+        `).bind(course).first();
+        const courseId = Number(courseIdRow?.course_id || 0);
+        const unitId = Number(row.id || 0);
+        return json({
+          ok: true,
+          unit: {
+            id: unitId,
+            unitId,
+            courseId,
+            title: row.title,
+            course: row.course,
+            isVisible: Number(row.is_visible ?? 1) !== 0
+          }
+        }, cors);
+      }
+
       if (url.pathname.startsWith("/api/units/") && request.method === "PATCH") {
         const id = Number(url.pathname.split("/").pop());
         if (!Number.isFinite(id) || id <= 0) return json({ error: "invalid unit id" }, cors, 400);
