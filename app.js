@@ -18,23 +18,27 @@ function eDB(d) {
   return {
     appTitle: d?.appTitle || "カイゴクイズ",
     courses: courses.map((c) => {
-      const courseRawId = c?.courseId ?? c?.id ?? null;
-      const courseId = courseRawId === "" ? null : courseRawId;
+      const rawCourseId = c?.courseId ?? c?.id ?? null;
+      const rawCourseAliasId = c?.id ?? c?.courseId ?? null;
+      const courseId = rawCourseId === "" ? null : rawCourseId;
+      const courseAliasId = rawCourseAliasId === "" ? null : rawCourseAliasId;
       const units = Array.isArray(c?.units) ? c.units : [];
       return {
-        id: courseId,
+        id: courseAliasId,
         courseId,
         title: c?.title || "",
         units: units.map((u) => {
-          const unitRawId = u?.unitId ?? u?.id ?? null;
-          const unitId = unitRawId === "" ? null : unitRawId;
+          const rawUnitId = u?.unitId ?? u?.id ?? null;
+          const rawUnitAliasId = u?.id ?? u?.unitId ?? null;
+          const unitId = rawUnitId === "" ? null : rawUnitId;
+          const unitAliasId = rawUnitAliasId === "" ? null : rawUnitAliasId;
           const questions = Array.isArray(u?.questions) ? u.questions.map(nQ) : [];
           questions.forEach((q) => {
             if ((q.unitId == null || q.unitId === "") && unitId != null) q.unitId = unitId;
             if ((q.courseId == null || q.courseId === "") && courseId != null) q.courseId = courseId;
           });
           return {
-            id: unitId,
+            id: unitAliasId,
             unitId,
             title: u?.title || "",
             isVisible: u?.isVisible !== false,
@@ -48,7 +52,13 @@ function eDB(d) {
 
 const gAns = (q) => { const n = Math.max(1, Number(q.blankCount) || 1), a = Array.isArray(q.answers) ? q.answers.slice() : []; while (a.length < n) a.push(""); return a.slice(0, n); };
 async function api(path, init = {}) { const r = await fetch(`${API_BASE}${path}`, init); if (!r.ok) throw new Error(`${r.status} ${r.statusText}`); const ct = r.headers.get("content-type") || ""; return ct.includes("application/json") ? r.json() : r.text(); }
-async function loadData(admin = false) { db = eDB(await api(`/api/questions${admin ? "?admin=1" : ""}`)); }
+async function loadData(admin = false) {
+  const raw = await api(`/api/questions${admin ? "?admin=1" : ""}`);
+  console.log("RAW API FULL", JSON.stringify(raw, null, 2));
+  db = eDB(raw);
+  console.log("DB FULL", JSON.stringify(db, null, 2));
+  console.log("COURSES FULL", JSON.stringify(db.courses, null, 2));
+}
 
 function curUnit() { return db.courses[courseIndex]?.units?.[unitIndex]; }
 function curQ() { return curUnit()?.questions?.[questionIndex]; }
@@ -108,7 +118,7 @@ function buildQuestionPayload(q, ctx = {}) {
   return payload;
 }
 
-async function saveQuestion(qi) { if (saving) return; const list = curUnit().questions || []; const q = (editingQuestionId != null ? list.find((x) => String(x?.id) === String(editingQuestionId)) : null) || list[qi]; if (!q) { alert("保存対象の問題が見つかりません。"); return; } const fixedType = q.type; const fixedBlankCount = q.blankCount; const fixedAnswers = Array.isArray(q.answers) ? q.answers.slice() : []; try { applyEditorToQuestion(q); } catch { alert("blankCount と answers 数が一致しないため保存できません。"); return; } if (editingQuestionId != null && q.type !== fixedType) { q.type = fixedType; if (isMB(fixedType)) { q.blankCount = fixedBlankCount; q.answers = fixedAnswers; } } saving = true; try { const course = db.courses[courseIndex] || {}; const unit = course.units?.[unitIndex] || {}; const selectedCourse = { courseId: course?.courseId, title: course?.title }; const selectedUnit = { unitId: unit?.unitId, title: unit?.title }; let resolvedCourseId = selectedCourse.courseId; let resolvedUnitId = selectedUnit.unitId; if (!resolvedCourseId || !resolvedUnitId) { console.error("API response missing IDs", { selectedCourse, selectedUnit, course, unit }); throw new Error("保存先ID解決不可(courseId/unitId missing)"); } q.courseId = resolvedCourseId; q.unitId = resolvedUnitId; const payload = buildQuestionPayload(q, { courseId: resolvedCourseId, unitId: resolvedUnitId }); if (payload.courseId === undefined || payload.courseId === null || payload.courseId === "" || payload.unitId === undefined || payload.unitId === null || payload.unitId === "") { throw new Error("新規問題の保存先(courseId/unitId)が不正です。"); } console.log("SELECTED COURSE", selectedCourse); console.log("SELECTED UNIT", selectedUnit); console.log("FINAL PAYLOAD", payload); const path = q.id ? `/api/questions/${q.id}` : `/api/questions`; const method = q.id ? "PUT" : "POST"; const res = await fetch(`${API_BASE}${path}`, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }); const text = await res.text(); if (!res.ok) { console.error(text); throw new Error(`${res.status} ${res.statusText}`); } if (text) { try { JSON.parse(text); } catch (_) { } } await loadData(true); renderAdmin(); } catch (e) { alert(`保存エラー: ${e.message}`); } finally { saving = false; } }
+async function saveQuestion(qi) { if (saving) return; const list = curUnit().questions || []; const q = (editingQuestionId != null ? list.find((x) => String(x?.id) === String(editingQuestionId)) : null) || list[qi]; if (!q) { alert("保存対象の問題が見つかりません。"); return; } const fixedType = q.type; const fixedBlankCount = q.blankCount; const fixedAnswers = Array.isArray(q.answers) ? q.answers.slice() : []; try { applyEditorToQuestion(q); } catch { alert("blankCount と answers 数が一致しないため保存できません。"); return; } if (editingQuestionId != null && q.type !== fixedType) { q.type = fixedType; if (isMB(fixedType)) { q.blankCount = fixedBlankCount; q.answers = fixedAnswers; } } saving = true; try { const course = db.courses[courseIndex] || {}; const unit = course.units?.[unitIndex] || {}; const selectedCourse = { id: course?.id ?? course?.courseId ?? null, courseId: course?.courseId ?? course?.id ?? null, title: course?.title }; const selectedUnit = { id: unit?.id ?? unit?.unitId ?? null, unitId: unit?.unitId ?? unit?.id ?? null, title: unit?.title }; let resolvedCourseId = selectedCourse.courseId ?? selectedCourse.id; let resolvedUnitId = selectedUnit.unitId ?? selectedUnit.id; console.log("SELECTED COURSE", selectedCourse); console.log("SELECTED UNIT", selectedUnit); console.log("SELECTED COURSE FULL", JSON.stringify(selectedCourse, null, 2)); console.log("SELECTED UNIT FULL", JSON.stringify(selectedUnit, null, 2)); console.log("RESOLVED IDS", { courseId: selectedCourse?.courseId, courseId2: selectedCourse?.id, unitId: selectedUnit?.unitId, unitId2: selectedUnit?.id }); if (!resolvedCourseId || !resolvedUnitId) { console.error("API response missing IDs", { selectedCourse, selectedUnit, course, unit }); throw new Error("保存先ID解決不可(courseId/unitId missing)"); } q.courseId = resolvedCourseId; q.unitId = resolvedUnitId; const payload = buildQuestionPayload(q, { courseId: resolvedCourseId, unitId: resolvedUnitId }); if (payload.courseId === undefined || payload.courseId === null || payload.courseId === "" || payload.unitId === undefined || payload.unitId === null || payload.unitId === "") { throw new Error("新規問題の保存先(courseId/unitId)が不正です。"); } console.log("FINAL PAYLOAD", payload); const path = q.id ? `/api/questions/${q.id}` : `/api/questions`; const method = q.id ? "PUT" : "POST"; const res = await fetch(`${API_BASE}${path}`, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }); const text = await res.text(); if (!res.ok) { console.error(text); throw new Error(`${res.status} ${res.statusText}`); } if (text) { try { JSON.parse(text); } catch (_) { } } await loadData(true); renderAdmin(); } catch (e) { alert(`保存エラー: ${e.message}`); } finally { saving = false; } }
 async function createQuestion(type) { const q = nQ({ type }); try { applyEditorToQuestion(q); } catch { alert("blankCount と answers 数が一致しないため保存できません。"); return; } curUnit().questions.push(q); await saveQuestion(curUnit().questions.length - 1); }
 async function deleteQuestion(qi) { if (deleting) return; const q = curUnit().questions[qi]; if (!confirm("削除しますか？")) return; deleting = true; try { if (q.id) await api(`/api/questions/${q.id}`, { method: "DELETE" }); else curUnit().questions.splice(qi, 1); await loadData(true); renderAdmin(); } catch (e) { alert(`削除エラー: ${e.message}`); } finally { deleting = false; } }
 
