@@ -787,12 +787,16 @@ function removeChoice(){ removeLastLine("editChoices"); }
 function appendAnswer(){ appendLine("editAnswers", ""); }
 function removeAnswer(){ removeLastLine("editAnswers"); }
 
+function isMultiBlankType(type){
+  return type === "fill_multi" || type === "image_fill";
+}
+
 function renderAnswerInputsByBlankCount(){
   const typeEl = document.getElementById("editType");
   const list = document.getElementById("editAnswersList");
   const text = document.getElementById("editAnswers");
   if(!typeEl || !list || !text) return;
-  const useList = typeEl.value === "fill_multi" || typeEl.value === "image_fill";
+  if(!isMultiBlankType(typeEl.value)) return;
 
   const currentListAnswers = [...list.querySelectorAll("input[data-answer-index]")].map((input) => normalize(input.value));
   const textAnswers = text.value.split("\n").map(normalize).filter(Boolean);
@@ -829,7 +833,7 @@ function toggleAnswerInputMode(){
   const textActions = document.getElementById("editAnswersTextActions");
   const multiActions = document.getElementById("editAnswersMultiActions");
   if(!list || !text || !label || !textActions || !multiActions) return;
-  const isMultiBlank = type === "fill_multi" || type === "image_fill";
+  const isMultiBlank = isMultiBlankType(type);
   if(isMultiBlank){
     label.textContent = "正解（空欄順に入力）";
     text.classList.add("hidden");
@@ -849,11 +853,14 @@ function toggleAnswerInputMode(){
 
 function appendFillMultiBlank(){
   const q = document.getElementById("editQuestion");
+  const blankCountEl = document.getElementById("editBlankCount");
   if(q){
     q.value += "（　　　）";
     q.focus();
   }
-  appendAnswer();
+  const nextBlankCount = (Number(blankCountEl?.value) || 0) + 1;
+  if(blankCountEl) blankCountEl.value = String(nextBlankCount);
+  renderAnswerInputsByBlankCount();
 }
 
 async function saveQuestion(index){
