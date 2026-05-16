@@ -1029,7 +1029,6 @@ else if (action === "back-units") {
   });
 
   judge(ok, expected.join(", "));
-}
   } else if (action === "admin-back") {
     editingQuestionId = null;
     renderAdmin();
