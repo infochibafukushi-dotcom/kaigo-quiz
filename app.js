@@ -5,16 +5,19 @@ let unitIndex = 0;
 let questionIndex = 0;
 let lastResultShown = false;
 let editingImageData = "";
+let editAnswersCache = [];
 
 const app = document.getElementById("app");
 const API_BASE = window.KAIGO_QUIZ_API_BASE || "https://kaigo-quiz-save.info-chibafukushi.workers.dev";
 
-async function loadData(){
+async function loadData(options = {}){
+  const admin = Boolean(options.admin);
+  const skipRender = Boolean(options.skipRender);
   try{
-    const res = await fetch(`${API_BASE}/api/questions?ts=` + Date.now());
+    const res = await fetch(`${API_BASE}/api/questions?ts=${Date.now()}&admin=${admin ? "1" : "0"}`);
     if(!res.ok) throw new Error(`APIエラー: ${res.status}`);
     db = ensureDbShape(await res.json());
-    renderUnits(0);
+    if(!skipRender) renderUnits(0);
   }catch(e){
     db = ensureDbShape(null);
     app.innerHTML = `
@@ -27,7 +30,7 @@ async function loadData(){
     `;
   }
 
-  renderUnits(0);
+  if(!skipRender) renderUnits(0);
 }
 
 function ensureDbShape(data){
@@ -155,6 +158,7 @@ function renderUnits(ci = 0){
   `;
 
   c.units.forEach((u, i)=>{
+    if(u.isVisible === false) return;
     html += `
       <div class="card unit-card" onclick="startQuiz(${ci},${i})">
         <div>
@@ -378,7 +382,8 @@ function nextQuestion(){
   renderQuestion();
 }
 
-function renderAdmin(){
+async function renderAdmin(){
+  await loadData({ admin: true, skipRender: true });
   db = ensureDbShape(db);
   if(db.courses.length === 0){
     db.courses.push({title:"新しい大分類", units:[{title:"新しい単元", questions:[]}]});
@@ -416,11 +421,13 @@ function renderAdmin(){
   `;
 
   c.units.forEach((unit, i)=>{
+    const visibilityLabel = unit.isVisible === false ? "非表示" : "表示中";
     html += `
       <div class="list-item ${i === unitIndex ? "active" : ""}">
-        <strong>${esc(unit.title)}</strong><br>
+        <strong>${esc(unit.title)}（${visibilityLabel}）</strong><br>
         <span class="sub">${unit.questions.length}問</span><br>
         <button class="small" onclick="selectUnit(${i})">選択</button>
+        <button class="small secondary" onclick="toggleUnitVisibility(${i})">${unit.isVisible === false ? "表示にする" : "非表示にする"}</button>
         <button class="small secondary" onclick="renameUnit(${i})">名称変更</button>
         <button class="small danger" onclick="deleteUnit(${i})">削除</button>
       </div>
@@ -461,6 +468,19 @@ function renderAdmin(){
 
   html += `</div></div>`;
   app.innerHTML = html;
+}
+
+async function toggleUnitVisibility(index){
+  const c = db.courses[courseIndex];
+  const u = c?.units?.[index];
+  if(!u?.id) return alert("単元IDが見つかりません");
+  const nextVisible = u.isVisible === false;
+  await apiJson(`${API_BASE}/api/units/${encodeURIComponent(u.id)}/visibility`, {
+    method:"PATCH",
+    headers:{"content-type":"application/json"},
+    body:JSON.stringify({ is_visible: nextVisible })
+  }, "単元表示状態の更新に失敗しました");
+  await renderAdmin();
 }
 
 function answerText(q){
@@ -529,6 +549,9 @@ function editQuestion(index){
   const unit = db.courses[courseIndex].units[unitIndex];
   const q = isNew ? {type:"fill", question:"", answers:[""]} : unit.questions[index];
   editingImageData = normalize(q.imageData || q.imageUrl || q.image || "");
+  editAnswersCache = q.type === "choice" || q.type === "ox"
+    ? [normalize(q.answer || "")]
+    : (q.answers || []).map(normalize);
 
   let html = `
     <div class="topbar">
@@ -764,24 +787,42 @@ function removeChoice(){ removeLastLine("editChoices"); }
 function appendAnswer(){ appendLine("editAnswers", ""); }
 function removeAnswer(){ removeLastLine("editAnswers"); }
 
+function isMultiBlankType(type){
+  return type === "fill_multi" || type === "image_fill";
+}
+
 function renderAnswerInputsByBlankCount(){
   const typeEl = document.getElementById("editType");
   const list = document.getElementById("editAnswersList");
   const text = document.getElementById("editAnswers");
   if(!typeEl || !list || !text) return;
-  const useList = typeEl.value === "fill_multi" || typeEl.value === "image_fill";
+  if(!isMultiBlankType(typeEl.value)) return;
 
   const currentListAnswers = [...list.querySelectorAll("input[data-answer-index]")].map((input) => normalize(input.value));
   const textAnswers = text.value.split("\n").map(normalize).filter(Boolean);
-  const savedAnswers = currentListAnswers.length ? currentListAnswers : textAnswers;
+  if(currentListAnswers.length){
+    currentListAnswers.forEach((value, index) => { editAnswersCache[index] = value; });
+  }else if(!editAnswersCache.length && textAnswers.length){
+    editAnswersCache = [...textAnswers];
+  }
 
   list.innerHTML = "";
   const blankCount = Number(document.getElementById("editBlankCount")?.value) || 0;
   for(let i = 0; i < blankCount; i++){
-    const v = savedAnswers[i] || "";
-    list.innerHTML += `<label class="fill-multi-row">${esc(toCircledNumber(i + 1))}<input data-answer-index="${i}" value="${esc(v)}" placeholder="${esc(toCircledNumber(i + 1))}の正解"></label>`;
+    const v = editAnswersCache[i] || "";
+    list.innerHTML += `<label class="fill-multi-row">${esc(toCircledNumber(i + 1))}<input data-answer-index="${i}" value="${esc(v)}" placeholder="${esc(toCircledNumber(i + 1))}の正解" oninput="syncAnswerCacheFromInput(event)"></label>`;
   }
-  text.value = savedAnswers.join("\n");
+  text.value = editAnswersCache.join("\n");
+}
+
+function syncAnswerCacheFromInput(event){
+  const input = event?.target;
+  if(!input) return;
+  const index = Number(input.dataset.answerIndex);
+  if(Number.isNaN(index)) return;
+  editAnswersCache[index] = normalize(input.value);
+  const text = document.getElementById("editAnswers");
+  if(text) text.value = editAnswersCache.join("\n");
 }
 
 function toggleAnswerInputMode(){
@@ -792,7 +833,7 @@ function toggleAnswerInputMode(){
   const textActions = document.getElementById("editAnswersTextActions");
   const multiActions = document.getElementById("editAnswersMultiActions");
   if(!list || !text || !label || !textActions || !multiActions) return;
-  const isMultiBlank = type === "fill_multi" || type === "image_fill";
+  const isMultiBlank = isMultiBlankType(type);
   if(isMultiBlank){
     label.textContent = "正解（空欄順に入力）";
     text.classList.add("hidden");
@@ -812,11 +853,14 @@ function toggleAnswerInputMode(){
 
 function appendFillMultiBlank(){
   const q = document.getElementById("editQuestion");
+  const blankCountEl = document.getElementById("editBlankCount");
   if(q){
     q.value += "（　　　）";
     q.focus();
   }
-  appendAnswer();
+  const nextBlankCount = (Number(blankCountEl?.value) || 0) + 1;
+  if(blankCountEl) blankCountEl.value = String(nextBlankCount);
+  renderAnswerInputsByBlankCount();
 }
 
 async function saveQuestion(index){
@@ -870,12 +914,24 @@ async function saveQuestion(index){
 
 async function deleteQuestion(i){
   if(!confirm("この問題を削除しますか？")) return;
-  db.courses[courseIndex].units[unitIndex].questions.splice(i,1);
+  const questions = db.courses[courseIndex].units[unitIndex].questions;
+  const target = questions[i];
+  const id = Number(target?.id);
+  console.log("DELETE ID=", target?.id, "parsed=", id);
   try{
+    if(Number.isFinite(id) && id > 0){
+      const res = await fetch(`${API_BASE}/api/questions/${encodeURIComponent(id)}`, { method:"DELETE" });
+      if(!res.ok){
+        const body = await res.text();
+        alert(`削除に失敗しました (status=${res.status})\n${body || "(no response body)"}`);
+        return;
+      }
+    }
+    questions.splice(i,1);
     await saveLocalData(false);
     renderAdmin();
   }catch(e){
-    alert(`保存に失敗しました: ${e?.message || e}`);
+    alert(`削除に失敗しました: ${e?.message || e}`);
   }
 }
 
