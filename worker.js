@@ -19,20 +19,24 @@ export default {
 
       if (url.pathname === "/api/questions" && request.method === "POST") {
         const body = await request.json();
-        await upsertQuestion(env.DB, body);
-        return json({ ok: true }, cors);
+        const result = await upsertQuestion(env.DB, body);
+        return json({ ok: true, ...result }, cors);
       }
 
       if (url.pathname.startsWith("/api/questions/") && request.method === "PUT") {
         const id = Number(url.pathname.split("/").pop());
+        if (!Number.isFinite(id) || id <= 0) return json({ error: "invalid id" }, cors, 400);
         const body = await request.json();
-        await upsertQuestion(env.DB, body, id);
-        return json({ ok: true }, cors);
+        const result = await upsertQuestion(env.DB, body, id);
+        if (result.action !== "updated") return json({ error: "question not found" }, cors, 404);
+        return json({ ok: true, ...result }, cors);
       }
 
       if (url.pathname.startsWith("/api/questions/") && request.method === "DELETE") {
         const id = Number(url.pathname.split("/").pop());
-        await env.DB.prepare("DELETE FROM questions WHERE id = ?").bind(id).run();
+        if (!Number.isFinite(id) || id <= 0) return json({ error: "invalid id" }, cors, 400);
+        const res = await env.DB.prepare("DELETE FROM questions WHERE id = ?").bind(id).run();
+        if (!res.meta?.changes) return json({ error: "question not found" }, cors, 404);
         return json({ ok: true }, cors);
       }
 
@@ -140,31 +144,35 @@ async function upsertQuestion(DB, payload, forcedId = null) {
   ];
 
   if (forcedId !== null) {
-    await DB.prepare(`
+    const res = await DB.prepare(`
       UPDATE questions
       SET type=?, question=?, choices_json=?, answer_json=?, blank_count=?,
           course=?, unit=?, explanation=?, image_url=?, sort_order=?,
           updated_at=CURRENT_TIMESTAMP
       WHERE id=?
     `).bind(...values, forcedId).run();
-    return;
+    return { action: "updated", id: forcedId, changes: Number(res.meta?.changes || 0) };
   }
 
-  if (payload.id) {
-    await DB.prepare(`
+  const payloadId = Number(payload.id);
+  if (Number.isFinite(payloadId) && payloadId > 0) {
+    const res = await DB.prepare(`
       UPDATE questions
       SET type=?, question=?, choices_json=?, answer_json=?, blank_count=?,
           course=?, unit=?, explanation=?, image_url=?, sort_order=?,
           updated_at=CURRENT_TIMESTAMP
       WHERE id=?
-    `).bind(...values, payload.id).run();
-    return;
+    `).bind(...values, payloadId).run();
+    if (Number(res.meta?.changes || 0) > 0) {
+      return { action: "updated", id: payloadId, changes: Number(res.meta?.changes || 0) };
+    }
   }
 
-  await DB.prepare(`
+  const insertRes = await DB.prepare(`
     INSERT INTO questions (
       type, question, choices_json, answer_json, blank_count,
       course, unit, explanation, image_url, sort_order
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(...values).run();
+  return { action: "inserted", id: Number(insertRes.meta?.last_row_id || 0), changes: Number(insertRes.meta?.changes || 0) };
 }

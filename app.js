@@ -672,10 +672,20 @@ async function parseJsonSafe(response){
 
 async function apiJson(url, options = {}, fallbackMessage = "APIエラー"){
   const response = await fetch(url, options);
-  const data = await parseJsonSafe(response);
+  let data = await parseJsonSafe(response);
   if(!response.ok){
-    const detail = data?.error ? `: ${data.error}` : "";
-    throw new Error(`${fallbackMessage} (${response.status})${detail}`);
+    if(!data){
+      try{
+        const bodyText = await response.text();
+        data = bodyText ? { body: bodyText } : null;
+      }catch(e){}
+    }
+    const detailParts = [];
+    if(data?.error) detailParts.push(`error=${data.error}`);
+    if(data?.message) detailParts.push(`message=${data.message}`);
+    if(data?.body) detailParts.push(`body=${data.body}`);
+    const detail = detailParts.length ? `: ${detailParts.join(" / ")}` : "";
+    throw new Error(`${fallbackMessage} (status=${response.status})${detail}`);
   }
   return data;
 }
@@ -707,11 +717,20 @@ async function syncAllQuestionsToApi(){
         const q = unit.questions[i];
         if(q.id) incomingIds.add(q.id);
         const payload = {...q, course:course.title, unit:unit.title, sortOrder:i};
-        await apiJson(`${API_BASE}/api/questions`, {
-          method:"POST",
-          headers:{"content-type":"application/json"},
-          body:JSON.stringify(payload)
-        }, "問題の保存に失敗しました");
+        if(q.id){
+          await apiJson(`${API_BASE}/api/questions/${encodeURIComponent(q.id)}`, {
+            method:"PUT",
+            headers:{"content-type":"application/json"},
+            body:JSON.stringify(payload)
+          }, "問題の更新に失敗しました");
+        }else{
+          const saved = await apiJson(`${API_BASE}/api/questions`, {
+            method:"POST",
+            headers:{"content-type":"application/json"},
+            body:JSON.stringify(payload)
+          }, "問題の作成に失敗しました");
+          if(saved?.id) q.id = saved.id;
+        }
       }
     }
   }
