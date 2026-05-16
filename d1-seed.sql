@@ -1,19 +1,18 @@
-BEGIN TRANSACTION;
+CREATE TABLE IF NOT EXISTS questions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type TEXT NOT NULL,
+  question TEXT,
+  choices_json TEXT NOT NULL DEFAULT '[]',
+  answer_json TEXT NOT NULL DEFAULT '[]',
+  blank_count INTEGER NOT NULL DEFAULT 0,
+  course TEXT NOT NULL,
+  unit TEXT NOT NULL,
+  explanation TEXT,
+  image_url TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 
-DELETE FROM questions;
-DELETE FROM units;
-
-INSERT INTO units (course, title, is_visible) VALUES
-  ('介護福祉士', '人間の尊厳と自立', 1),
-  ('介護福祉士', '介護の基本', 1),
-  ('介護福祉士', 'コミュニケーション技術', 1),
-  ('介護福祉士', '社会の理解', 1),
-  ('介護福祉士', '認知症の理解', 1),
-  ('介護福祉士', '発達と老化の理解', 1),
-  ('介護福祉士', '障害の理解', 1),
-  ('介護福祉士', 'こころとからだのしくみ1', 1),
-  ('介護福祉士', 'こころとからだのしくみ2', 1),
-  ('介護福祉士', '介護過程1', 1),
-  ('介護福祉士', '介護過程2', 1);
-
-COMMIT;
+CREATE INDEX IF NOT EXISTS idx_questions_course_unit_sort
+ON questions(course, unit, sort_order, id);
