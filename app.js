@@ -949,17 +949,13 @@ document.addEventListener("click", async (event) => {
     renderAdmin();
   } else if (action === "open-course") {
     renderUnits(Number(target.dataset.ci));
-  } else if (action === "start-quiz") {
-    courseIndex = Number(target.dataset.ci);
-    unitIndex = Number(target.dataset.ui);
-    questionIndex = 0;
-    if ((curUnit()?.questions || []).length === 0) {
-      alert("この単元にはまだ問題がありません。");
-      renderUnits(courseIndex);
-    } else {
-      renderQuestion();
-    }
-  } else if (action === "back-units") {
+    }else if (action === "start-quiz") {
+  courseIndex = Number(target.dataset.ci);
+  unitIndex = Number(target.dataset.ui);
+  questionIndex = 0;
+  renderQuestion();
+}
+else if (action === "back-units") {
     renderUnits(courseIndex);
   } else if (action === "next-q") {
     questionIndex += 1;
