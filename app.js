@@ -5,6 +5,7 @@ let unitIndex = 0;
 let questionIndex = 0;
 let lastResultShown = false;
 let editingImageData = "";
+let editAnswersCache = [];
 
 const app = document.getElementById("app");
 const API_BASE = window.KAIGO_QUIZ_API_BASE || "https://kaigo-quiz-save.info-chibafukushi.workers.dev";
@@ -529,6 +530,9 @@ function editQuestion(index){
   const unit = db.courses[courseIndex].units[unitIndex];
   const q = isNew ? {type:"fill", question:"", answers:[""]} : unit.questions[index];
   editingImageData = normalize(q.imageData || q.imageUrl || q.image || "");
+  editAnswersCache = q.type === "choice" || q.type === "ox"
+    ? [normalize(q.answer || "")]
+    : (q.answers || []).map(normalize);
 
   let html = `
     <div class="topbar">
@@ -773,15 +777,29 @@ function renderAnswerInputsByBlankCount(){
 
   const currentListAnswers = [...list.querySelectorAll("input[data-answer-index]")].map((input) => normalize(input.value));
   const textAnswers = text.value.split("\n").map(normalize).filter(Boolean);
-  const savedAnswers = currentListAnswers.length ? currentListAnswers : textAnswers;
+  if(currentListAnswers.length){
+    currentListAnswers.forEach((value, index) => { editAnswersCache[index] = value; });
+  }else if(!editAnswersCache.length && textAnswers.length){
+    editAnswersCache = [...textAnswers];
+  }
 
   list.innerHTML = "";
   const blankCount = Number(document.getElementById("editBlankCount")?.value) || 0;
   for(let i = 0; i < blankCount; i++){
-    const v = savedAnswers[i] || "";
-    list.innerHTML += `<label class="fill-multi-row">${esc(toCircledNumber(i + 1))}<input data-answer-index="${i}" value="${esc(v)}" placeholder="${esc(toCircledNumber(i + 1))}の正解"></label>`;
+    const v = editAnswersCache[i] || "";
+    list.innerHTML += `<label class="fill-multi-row">${esc(toCircledNumber(i + 1))}<input data-answer-index="${i}" value="${esc(v)}" placeholder="${esc(toCircledNumber(i + 1))}の正解" oninput="syncAnswerCacheFromInput(event)"></label>`;
   }
-  text.value = savedAnswers.join("\n");
+  text.value = editAnswersCache.join("\n");
+}
+
+function syncAnswerCacheFromInput(event){
+  const input = event?.target;
+  if(!input) return;
+  const index = Number(input.dataset.answerIndex);
+  if(Number.isNaN(index)) return;
+  editAnswersCache[index] = normalize(input.value);
+  const text = document.getElementById("editAnswers");
+  if(text) text.value = editAnswersCache.join("\n");
 }
 
 function toggleAnswerInputMode(){
