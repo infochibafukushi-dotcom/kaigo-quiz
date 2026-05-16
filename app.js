@@ -2,6 +2,7 @@ const API_BASE = window.KAIGO_QUIZ_API_BASE || "https://kaigo-quiz-save.info-chi
 let db = { appTitle: "カイゴクイズ", courses: [] };
 let courseIndex = 0, unitIndex = 0, questionIndex = 0;
 let saving = false, deleting = false;
+let editingQuestionId = null;
 const app = document.getElementById("app");
 
 const TYPES = ["choice","ox","multi","fill","fill_multi","image_fill"];
@@ -39,8 +40,8 @@ if(q.type==="multi")h+=`<label>正解(改行区切り)<textarea id="eq-answers-t
 if(isMB(q.type)){h+=`<label>blankCount<input id="eq-blankCount" type="number" min="1" max="8" value="${Math.max(1,Number(q.blankCount)||1)}"></label><div id="eq-answers">`;gAns(q).forEach((a,i)=>h+=`<label>アンサー${i+1}<input class="edit-answer" value="${esc(a||"")}"></label>`);h+=`</div>`;}
 return h;}
 function renderQuestionTypeSelector(){app.innerHTML=`<div class="topbar"><button data-act="admin-back">戻る</button></div><div class="card"><h3>問題タイプを選択</h3>${TYPES.map(t=>`<button data-act="pick-type" data-type="${t}">${esc(TLABEL[t])}</button>`).join("")}</div><div class="card" id="live-editor"><p class="sub">タイプ選択で入力UIを表示します</p></div>`;}
-function renderEditQuestion(qi){const q=curUnit().questions[qi];app.innerHTML=`<div class="topbar"><button data-act="admin-back">戻る</button></div><div class="card"><h3>${esc(db.courses[courseIndex].title)} / ${esc(curUnit().title)} / ${esc(TLABEL[q.type])}</h3>${typeFields(q)}<button data-act="save-q" data-qi="${qi}">保存</button></div>`;}
-function renderCreateForType(type){const q=nQ({type,blankCount:1});app.innerHTML=`<div class="topbar"><button data-act="admin-back">戻る</button></div><div class="card"><h3>新規問題: ${esc(TLABEL[type])}</h3>${typeFields(q)}<button data-act="create-q" data-type="${type}">保存</button></div>`;}
+function renderEditQuestion(qi){const q=curUnit().questions[qi];editingQuestionId=q?.id??null;app.innerHTML=`<div class="topbar"><button data-act="admin-back">戻る</button></div><div class="card"><h3>${esc(db.courses[courseIndex].title)} / ${esc(curUnit().title)} / ${esc(TLABEL[q.type])}</h3>${typeFields(q)}<button data-act="save-q" data-qi="${qi}">保存</button></div>`;}
+function renderCreateForType(type){editingQuestionId=null;const q=nQ({type,blankCount:1});app.innerHTML=`<div class="topbar"><button data-act="admin-back">戻る</button></div><div class="card"><h3>新規問題: ${esc(TLABEL[type])}</h3>${typeFields(q)}<button data-act="create-q" data-type="${type}">保存</button></div>`;}
 
 
 function isPreviewImageSrc(v){const s=String(v||"").trim().toLowerCase();return s.startsWith("blob:")||s.startsWith("data:")||s.startsWith("object:");}
@@ -74,7 +75,7 @@ function buildQuestionPayload(q,ctx={}){
   return payload;
 }
 
-async function saveQuestion(qi){if(saving)return;const q=curUnit().questions[qi];try{applyEditorToQuestion(q);}catch{alert("blankCount と answers 数が一致しないため保存できません。");return;}saving=true;try{const course=db.courses[courseIndex]||{};const unit=course.units?.[unitIndex]||{};const payload=buildQuestionPayload(q,{courseId:course.id,unitId:unit.id});console.log("SAVE PAYLOAD",payload);console.log(JSON.stringify(payload,null,2));const path=q.id?`/api/questions/${q.id}`:`/api/questions`;const method=q.id?"PUT":"POST";const res=await fetch(`${API_BASE}${path}`,{method,headers:{"content-type":"application/json"},body:JSON.stringify(payload)});const text=await res.text();if(!res.ok){console.error(text);throw new Error(`${res.status} ${res.statusText}`);}if(text){try{JSON.parse(text);}catch(_){}}await loadData(true);renderAdmin();}catch(e){alert(`保存エラー: ${e.message}`);}finally{saving=false;}}
+async function saveQuestion(qi){if(saving)return;const list=curUnit().questions||[];const q=(editingQuestionId!=null?list.find(x=>String(x?.id)===String(editingQuestionId)):null)||list[qi];if(!q){alert("保存対象の問題が見つかりません。");return;}const fixedType=q.type;const fixedBlankCount=q.blankCount;const fixedAnswers=Array.isArray(q.answers)?q.answers.slice():[];try{applyEditorToQuestion(q);}catch{alert("blankCount と answers 数が一致しないため保存できません。");return;}if(editingQuestionId!=null&&q.type!==fixedType){q.type=fixedType;if(isMB(fixedType)){q.blankCount=fixedBlankCount;q.answers=fixedAnswers;}}saving=true;try{const course=db.courses[courseIndex]||{};const unit=course.units?.[unitIndex]||{};const payload=buildQuestionPayload(q,{courseId:course.id,unitId:unit.id});console.log("SAVE PAYLOAD",payload);console.log(JSON.stringify(payload,null,2));const path=q.id?`/api/questions/${q.id}`:`/api/questions`;const method=q.id?"PUT":"POST";const res=await fetch(`${API_BASE}${path}`,{method,headers:{"content-type":"application/json"},body:JSON.stringify(payload)});const text=await res.text();if(!res.ok){console.error(text);throw new Error(`${res.status} ${res.statusText}`);}if(text){try{JSON.parse(text);}catch(_){}}await loadData(true);renderAdmin();}catch(e){alert(`保存エラー: ${e.message}`);}finally{saving=false;}}
 async function createQuestion(type){const q=nQ({type});try{applyEditorToQuestion(q);}catch{alert("blankCount と answers 数が一致しないため保存できません。");return;}curUnit().questions.push(q);await saveQuestion(curUnit().questions.length-1);}
 async function deleteQuestion(qi){if(deleting)return;const q=curUnit().questions[qi];if(!confirm("削除しますか？"))return;deleting=true;try{if(q.id)await api(`/api/questions/${q.id}`,{method:"DELETE"});else curUnit().questions.splice(qi,1);await loadData(true);renderAdmin();}catch(e){alert(`削除エラー: ${e.message}`);}finally{deleting=false;}}
 
