@@ -220,8 +220,31 @@ textarea{min-height:90px;resize:vertical}
   button{padding:10px 12px}
 }
 
-.fill-multi-row{display:block;font-weight:700;margin:8px 0}
-.fill-multi-row input{margin-top:4px}
+.fill-multi-row{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  font-weight:700;
+  margin:8px 0;
+  flex-wrap:nowrap;
+}
+.fill-multi-row input{
+  margin-top:0;
+  margin-bottom:0;
+  flex:1;
+  min-width:0;
+}
+.answer-judge{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:28px;
+  min-width:28px;
+  font-size:20px;
+  font-weight:900;
+}
+.answer-judge.ok{color:var(--ok)}
+.answer-judge.ng{color:var(--ng)}
 .quiz-image-wrap{margin:8px 0 14px}
 .quiz-image{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:12px;background:#f8fafc}
 .quiz-image-fallback{padding:12px;border:1px dashed var(--line);border-radius:12px;color:var(--muted);font-weight:700}

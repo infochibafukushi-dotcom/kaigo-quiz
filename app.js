@@ -49,6 +49,10 @@ function normalize(s){
   return String(s ?? "").trim();
 }
 
+function normalizeForCompare(s){
+  return normalize(s).normalize("NFKC").toLowerCase();
+}
+
 function beep(ok){
   try{
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -241,9 +245,9 @@ function showResult(ok, ans){
 
 function checkFill(){
   const q = currentQuestion();
-  const val = normalize(document.getElementById("answerInput").value);
+  const val = normalizeForCompare(document.getElementById("answerInput").value);
   const answers = getCorrectAnswers(q);
-  const ok = val !== "" && answers.some(a => normalize(a) === val);
+  const ok = val !== "" && answers.some(a => normalizeForCompare(a) === val);
   showResult(ok, answers);
 }
 
@@ -251,43 +255,83 @@ function checkFillMulti(){
   const q = currentQuestion();
   const answers = getCorrectAnswers(q);
   const blankCount = getQuestionBlankCount(q);
-  let ok = true;
+  const results = [];
 
   for(let i = 0; i < blankCount; i++){
     const input = document.getElementById(`answerInput${i}`);
-    const val = normalize(input ? input.value : "");
-    const ans = normalize(answers[i] || "");
-    if(val === "" || ans === "" || val !== ans) ok = false;
+    const val = normalizeForCompare(input ? input.value : "");
+    const ans = normalizeForCompare(answers[i] || "");
+    const correct = val !== "" && ans !== "" && val === ans;
+    results.push({index:i + 1, correct});
   }
-  showResult(ok, answers);
+  showMultiInputJudges(results);
+  showMultiResult(results, answers);
 }
 
 function checkImageFill(){
   const q = currentQuestion();
   const answers = getCorrectAnswers(q);
   const blankCount = getQuestionBlankCount(q);
-  let ok = true;
+  const results = [];
   for(let i = 0; i < blankCount; i++){
     const input = document.getElementById(`answerInput${i}`);
-    const val = normalize(input ? input.value : "");
-    const ans = normalize(answers[i] || "");
-    if(val === "" || ans === "" || val !== ans) ok = false;
+    const val = normalizeForCompare(input ? input.value : "");
+    const ans = normalizeForCompare(answers[i] || "");
+    const correct = val !== "" && ans !== "" && val === ans;
+    results.push({index:i + 1, correct});
   }
-  showResult(ok, answers);
+  showMultiInputJudges(results);
+  showMultiResult(results, answers);
 }
 
 function checkSingle(v){
   const q = currentQuestion();
-  showResult(normalize(q.answer) === normalize(v), q.answer);
+  showResult(normalizeForCompare(q.answer) === normalizeForCompare(v), q.answer);
 }
 
 function checkMulti(){
   const q = currentQuestion();
   const checked = [...document.querySelectorAll("input[type=checkbox]:checked")]
-    .map(x=>normalize(x.value))
+    .map(x=>normalizeForCompare(x.value))
     .sort();
-  const ans = q.answers.map(normalize).sort();
+  const ans = q.answers.map(normalizeForCompare).sort();
   showResult(JSON.stringify(checked) === JSON.stringify(ans), q.answers);
+}
+
+function showMultiInputJudges(results){
+  results.forEach((r, i) => {
+    const input = document.getElementById(`answerInput${i}`);
+    const row = input?.closest(".fill-multi-row");
+    if(!row) return;
+    let badge = row.querySelector(".answer-judge");
+    if(!badge){
+      badge = document.createElement("span");
+      badge.className = "answer-judge";
+      row.appendChild(badge);
+    }
+    badge.textContent = r.correct ? "○" : "×";
+    badge.classList.toggle("ok", r.correct);
+    badge.classList.toggle("ng", !r.correct);
+  });
+}
+
+function showMultiResult(results, answers){
+  if(lastResultShown) return;
+  lastResultShown = true;
+  const wrongCount = results.filter(r => !r.correct).length;
+  const allCorrect = wrongCount === 0;
+  beep(allCorrect);
+
+  const box = document.createElement("div");
+  box.className = `result ${allCorrect ? "ok" : "ng"}`;
+  box.innerHTML = `
+    ${allCorrect ? "正解！" : "不正解です"}
+    <div class="answer">${allCorrect ? "全問正解です。素晴らしいです！" : `${results.length}問中${wrongCount}問不正解です`}</div>
+    <div class="answer">正解：${esc(Array.isArray(answers) ? answers.join("、") : answers)}</div>
+    <button onclick="nextQuestion()">次へ</button>
+  `;
+  app.appendChild(box);
+  box.scrollIntoView({behavior:"smooth", block:"center"});
 }
 
 function nextQuestion(){
