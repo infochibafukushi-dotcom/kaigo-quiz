@@ -713,7 +713,7 @@ imageData: "",
   };
 
   const courseId = question.courseId ?? context.courseId;
-  const unitId = question.unitId ?? context.unitId;
+const unitId = context.unitId ?? question.unitId;
 
   if (courseId !== undefined && courseId !== null && courseId !== "") payload.courseId = courseId;
   if (unitId !== undefined && unitId !== null && unitId !== "") payload.unitId = unitId;
