@@ -2,12 +2,23 @@
 
 介護福祉士実務者研修向けの一問一答WEBアプリです。
 
-## GitHub Pages公開方法
+## フロントエンド
 
-Settings → Pages → Deploy from a branch → main / root
+- GitHub Pages で配信
 
-## 編集方法
+## バックエンド（新構成）
 
-左上の「管理」から問題と答えを編集できます。
+- Cloudflare Workers: API
+- Cloudflare D1: 問題データ永続化
+- Cloudflare R2: 問題画像保存
 
-GitHub Pagesは静的サイトのため、編集後は「JSON出力」を押して、出力された `questions.json` をGitHubへ上書きしてください。
+## セットアップ
+
+1. `wrangler.toml` の `database_id` と `R2_PUBLIC_BASE_URL` を設定
+2. D1マイグレーションを実行
+   - `wrangler d1 execute kaigo-quiz --file migrations/0001_questions.sql`
+3. `questions.json` から移行SQLを生成
+   - `node scripts/migrate-questions-to-d1.mjs questions.json`
+4. 生成したSQLをD1へ反映
+   - `wrangler d1 execute kaigo-quiz --file d1-seed.sql`
+5. `app.js` の `API_BASE` を Workers URL に置換
