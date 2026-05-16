@@ -31,11 +31,13 @@ export default {
       if (url.pathname.startsWith("/api/questions/") && request.method === "PUT") {
         const id = Number(url.pathname.split("/").pop());
         if (!Number.isFinite(id) || id <= 0) return json({ error: "invalid id" }, cors, 400);
+
         const body = await request.json();
         console.log("REQ BODY", JSON.stringify(body, null, 2));
         if (!body.courseId || !body.unitId) {
           return json({ error: "courseId/unitId missing" }, cors, 400);
         }
+
         const result = await upsertQuestion(env.DB, body, id);
         if (result.action !== "updated") return json({ error: "question not found" }, cors, 404);
         return json({ ok: true, ...result }, cors);
@@ -83,8 +85,8 @@ async function buildQuizJson(DB, admin = false) {
     )
     SELECT q.*, u.id AS unit_id, u.is_visible, c.course_id
     FROM questions q
-    LEFT JOIN units u ON u.course = q.course AND u.title = q.unit
-    LEFT JOIN course_ids c ON c.course = q.course
+    INNER JOIN units u ON u.course = q.course AND u.title = q.unit
+    INNER JOIN course_ids c ON c.course = q.course
     ORDER BY q.course ASC, q.unit ASC, q.sort_order ASC, q.id ASC
   `).all();
 
@@ -92,8 +94,8 @@ async function buildQuizJson(DB, admin = false) {
   for (const row of results) {
     if (!admin && Number(row.is_visible ?? 1) === 0) continue;
 
-    const courseName = row.course || "未分類";
-    const unitName = row.unit || "未分類";
+    const courseName = row.course;
+    const unitName = row.unit;
     const courseId = Number(row.course_id);
     const unitId = Number(row.unit_id);
     if (!courseId || !unitId) {
@@ -158,7 +160,10 @@ function safeJson(text, fallback) {
 }
 
 async function upsertQuestion(DB, payload, forcedId = null) {
-  const ids = await resolveCourseUnitNames(DB, payload.courseId, payload.unitId);
+  const resolved = await resolveCourseUnitNames(DB, payload.courseId, payload.unitId);
+  console.log("RESOLVED UNIT", JSON.stringify({ id: resolved.unitId, title: resolved.unit }, null, 2));
+  console.log("RESOLVED COURSE", JSON.stringify({ id: resolved.courseId, title: resolved.course }, null, 2));
+
   const answers = payload.type === "ox" || payload.type === "choice"
     ? [payload.answer || ""]
     : (payload.answers || []);
@@ -169,8 +174,8 @@ async function upsertQuestion(DB, payload, forcedId = null) {
     JSON.stringify(payload.choices || []),
     JSON.stringify(answers),
     Number(payload.blankCount || 0),
-    ids.course,
-    ids.unit,
+    resolved.course,
+    resolved.unit,
     payload.explanation || "",
     payload.imageUrl || payload.imageData || "",
     Number(payload.sortOrder || 0)
@@ -211,31 +216,38 @@ async function upsertQuestion(DB, payload, forcedId = null) {
 }
 
 async function resolveCourseUnitNames(DB, courseIdRaw, unitIdRaw) {
-  const courseId = Number(courseIdRaw);
-  const unitId = Number(unitIdRaw);
-  if (!Number.isFinite(courseId) || courseId <= 0 || !Number.isFinite(unitId) || unitId <= 0) {
+  const requestedCourseId = Number(courseIdRaw);
+  const requestedUnitId = Number(unitIdRaw);
+  if (!Number.isFinite(requestedCourseId) || requestedCourseId <= 0 || !Number.isFinite(requestedUnitId) || requestedUnitId <= 0) {
     const err = new Error("courseId/unitId missing");
     err.status = 400;
     throw err;
   }
-  const unitRow = await DB.prepare("SELECT id, course, title FROM units WHERE id = ?").bind(unitId).first();
+
+  const unitRow = await DB.prepare("SELECT id, course, title FROM units WHERE id = ?").bind(requestedUnitId).first();
   if (!unitRow) {
     const err = new Error("unit not found");
     err.status = 400;
     throw err;
   }
 
-  const courseRow = await DB.prepare(`
+  const courseIdRow = await DB.prepare(`
     SELECT MIN(id) AS course_id
     FROM units
     WHERE course = ?
   `).bind(unitRow.course).first();
 
-  if (!courseRow?.course_id || Number(courseRow.course_id) !== courseId) {
+  const resolvedCourseId = Number(courseIdRow?.course_id || 0);
+  if (!resolvedCourseId || resolvedCourseId !== requestedCourseId) {
     const err = new Error("courseId/unitId mismatch");
     err.status = 400;
     throw err;
   }
 
-  return { course: unitRow.course, unit: unitRow.title };
+  return {
+    courseId: resolvedCourseId,
+    unitId: Number(unitRow.id),
+    course: unitRow.course,
+    unit: unitRow.title
+  };
 }
