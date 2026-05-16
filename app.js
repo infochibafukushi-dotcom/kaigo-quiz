@@ -57,6 +57,19 @@ const UNIT_ALIASES = new Map([
 
 const UNIT_ORDER = new Map(CANONICAL_UNITS.map((name, index) => [name, index]));
 
+
+const MAX_IMAGE_DATA_URL_BYTES = 1_800_000;
+
+function approxUtf8Bytes(value) {
+  return new TextEncoder().encode(String(value || "")).length;
+}
+
+function validateImageDataSize(dataUrl) {
+  const bytes = approxUtf8Bytes(dataUrl);
+  if (bytes > MAX_IMAGE_DATA_URL_BYTES) {
+    throw new Error("画像サイズが大きすぎます（約2MB制限）。より小さい画像を選択してください。目安: 1.8MB以下");
+  }
+}
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({
     "&": "&amp;",
@@ -659,8 +672,9 @@ async function applyEditorToQuestion(question) {
   const selectedImage = imageInput?.files?.[0];
 
   if (selectedImage) {
-    alert("画像保存OFF");
-question.imageData = "";
+    const dataUrl = await readFileAsDataURL(selectedImage);
+    validateImageDataSize(dataUrl);
+    question.imageData = dataUrl;
   }
 
   if (question.type === "ox" || question.type === "choice" || question.type === "fill") {
@@ -699,6 +713,7 @@ question.imageData = "";
 
 function buildQuestionPayload(question, context = {}) {
   const rawImage = String(question.imageData || "").trim();
+  if (rawImage) validateImageDataSize(rawImage);
   const payload = {
     id: question.id,
     type: norm(question.type || "fill"),
@@ -707,8 +722,8 @@ function buildQuestionPayload(question, context = {}) {
     answers: Array.isArray(question.answers) ? question.answers.map(norm) : [],
     answer: norm(question.answer),
     explanation: norm(question.explanation),
-    imageUrl: "",
-imageData: "",
+    imageUrl: rawImage,
+    imageData: rawImage,
     blankCount: Math.max(1, Number(question.blankCount) || 1)
   };
 
