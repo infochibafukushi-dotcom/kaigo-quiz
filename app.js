@@ -37,6 +37,13 @@ function ensureDbShape(data){
   return safe;
 }
 
+function ensureDbShape(data){
+  const safe = data && typeof data === "object" ? data : {};
+  if(!Array.isArray(safe.courses)) safe.courses = [];
+  safe.appTitle = normalize(safe.appTitle || "カイゴクイズ");
+  return safe;
+}
+
 async function saveLocalData(showAlert = true){
   await syncAllQuestionsToApi();
   if(showAlert){
@@ -663,8 +670,16 @@ async function uploadImageToApi(file){
   const form = new FormData();
   form.append("file", file);
   const res = await fetch(`${API_BASE}/api/upload`, { method:"POST", body:form });
-  if(!res.ok) throw new Error("画像アップロードに失敗しました");
+  if(!res.ok){
+    let message = "画像アップロードに失敗しました";
+    try{
+      const err = await res.json();
+      if(err?.error) message += `: ${err.error}`;
+    }catch(e){}
+    throw new Error(message);
+  }
   const json = await res.json();
+  if(!json.imageUrl) throw new Error("画像URLの取得に失敗しました");
   return json.imageUrl || "";
 }
 

@@ -22,6 +22,8 @@
 4. 生成したSQLをD1へ反映
    - `wrangler d1 execute kaigo-quiz --file d1-seed.sql`
 5. `app.js` の `API_BASE` を Workers URL に置換
+6. 画像アップロードが失敗する場合は Workers の環境変数 `R2_PUBLIC_BASE_URL` が設定されているか確認  
+   - 例: `https://pub-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.r2.dev`
 
 ## questions.json（134問）を復元元としてD1へ復元する手順
 

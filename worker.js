@@ -37,9 +37,15 @@ export default {
       }
 
       if (url.pathname === "/api/upload" && request.method === "POST") {
+        const contentType = request.headers.get("content-type") || "";
+        if (!contentType.toLowerCase().includes("multipart/form-data")) {
+          return json({ error: "content-type must be multipart/form-data" }, cors, 400);
+        }
         const formData = await request.formData();
         const file = formData.get("file");
-        if (!file) return json({ error: "file is required" }, cors, 400);
+        if (!file || typeof file.arrayBuffer !== "function") {
+          return json({ error: "file is required" }, cors, 400);
+        }
         const ext = (file.name?.split(".").pop() || "bin").toLowerCase();
         const key = `quiz-images/${crypto.randomUUID()}.${ext}`;
         const bucket = env.QUIZ_IMAGES || env.IMAGES;
@@ -47,7 +53,11 @@ export default {
         await bucket.put(key, await file.arrayBuffer(), {
           httpMetadata: { contentType: file.type || "application/octet-stream" }
         });
-        const imageUrl = `${env.R2_PUBLIC_BASE_URL.replace(/\/$/, "")}/${key}`;
+        const publicBaseUrl = String(env.R2_PUBLIC_BASE_URL || "").trim();
+        if (!publicBaseUrl) {
+          return json({ error: "R2_PUBLIC_BASE_URL is not configured" }, cors, 500);
+        }
+        const imageUrl = `${publicBaseUrl.replace(/\/$/, "")}/${key}`;
         return json({ imageUrl }, cors);
       }
 
