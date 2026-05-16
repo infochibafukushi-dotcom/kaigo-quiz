@@ -988,8 +988,16 @@ else if (action === "back-units") {
   } else if (action === "ans-fill-multi") {
     const question = curQuestion();
     const got = [...document.querySelectorAll(".blank-input")].map((item) => norm(item.value));
-    const expected = getAnswersForMultiBlank(question).map(norm);
-    judge(got.length === expected.length && got.every((value, index) => value === expected[index]), expected.join(", "));
+   const expected = getAnswersForMultiBlank(question);
+const ok =
+  got.length === expected.length &&
+  got.every((value, index) => {
+    const patterns = String(expected[index] || "")
+      .split("|")
+      .map(v => norm(v));
+    return patterns.includes(value);
+  });
+judge(ok, expected.join(", "));
   } else if (action === "admin-back") {
     editingQuestionId = null;
     renderAdmin();
