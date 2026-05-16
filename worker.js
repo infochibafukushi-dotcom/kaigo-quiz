@@ -177,7 +177,7 @@ async function upsertQuestion(DB, payload, forcedId = null) {
     resolved.course,
     resolved.unit,
     payload.explanation || "",
-    payload.imageUrl || payload.imageData || "",
+    payload.imageData || payload.imageUrl || "",
     Number(payload.sortOrder || 0)
   ];
 

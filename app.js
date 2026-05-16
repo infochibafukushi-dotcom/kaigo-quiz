@@ -18,14 +18,16 @@ function eDB(d) {
   return {
     appTitle: d?.appTitle || "カイゴクイズ",
     courses: courses.map((c) => {
-      const courseId = c?.courseId ?? c?.id ?? null;
+      const courseRawId = c?.courseId ?? c?.id ?? null;
+      const courseId = courseRawId === "" ? null : courseRawId;
       const units = Array.isArray(c?.units) ? c.units : [];
       return {
         id: courseId,
         courseId,
         title: c?.title || "",
         units: units.map((u) => {
-          const unitId = u?.unitId ?? u?.id ?? null;
+          const unitRawId = u?.unitId ?? u?.id ?? null;
+          const unitId = unitRawId === "" ? null : unitRawId;
           const questions = Array.isArray(u?.questions) ? u.questions.map(nQ) : [];
           questions.forEach((q) => {
             if ((q.unitId == null || q.unitId === "") && unitId != null) q.unitId = unitId;
@@ -84,7 +86,8 @@ function syncPreviewToQuestion(q) {
 }
 function applyEditorToQuestion(q) { q.question = norm(document.getElementById("eq-question")?.value); q.explanation = norm(document.getElementById("eq-exp")?.value); q.imageData = q.imageData || ""; syncPreviewToQuestion(q); if (q.type === "ox" || q.type === "choice" || q.type === "fill") q.answer = norm(document.getElementById("eq-answer")?.value); if (q.type === "choice" || q.type === "multi") q.choices = (document.getElementById("eq-choices")?.value || "").split("\n").map(norm).filter(Boolean); if (q.type === "multi") q.answers = (document.getElementById("eq-answers-text")?.value || "").split("\n").map(norm).filter(Boolean); if (isMB(q.type)) { q.blankCount = Math.max(1, Number(document.getElementById("eq-blankCount")?.value) || 1); q.answers = [...document.querySelectorAll(".edit-answer")].map((x) => norm(x.value)).slice(0, q.blankCount); while (q.answers.length < q.blankCount) q.answers.push(""); if (q.answers.length !== q.blankCount) throw new Error("blankCount mismatch"); } }
 function buildQuestionPayload(q, ctx = {}) {
-  const imageUrl = isPreviewImageSrc(q.imageData) ? "" : String(q.imageData || "").trim();
+  const rawImage = String(q.imageData || "").trim();
+  const imageUrl = rawImage;
   const payload = {
     id: q.id,
     type: norm(q.type || "fill"),
@@ -94,7 +97,7 @@ function buildQuestionPayload(q, ctx = {}) {
     answer: norm(q.answer),
     explanation: norm(q.explanation),
     imageUrl,
-    imageData: imageUrl,
+    imageData: rawImage,
     blankCount: Math.max(1, Number(q.blankCount) || 1)
   };
   const courseId = q.courseId ?? ctx.courseId;
