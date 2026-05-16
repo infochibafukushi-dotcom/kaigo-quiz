@@ -1,6 +1,7 @@
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+
     const cors = {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
@@ -8,7 +9,10 @@ export default {
     };
 
     if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: cors });
+      return new Response(null, {
+        status: 204,
+        headers: cors
+      });
     }
 
     try {
@@ -32,7 +36,12 @@ export default {
 
       if (url.pathname.startsWith("/api/questions/") && request.method === "DELETE") {
         const id = Number(url.pathname.split("/").pop());
-        await env.DB.prepare("DELETE FROM questions WHERE id = ?").bind(id).run();
+
+        await env.DB
+          .prepare("DELETE FROM questions WHERE id = ?")
+          .bind(id)
+          .run();
+
         return json({ ok: true }, cors);
       }
 
@@ -57,7 +66,8 @@ export default {
           }
         );
 
-        const imageUrl = `${env.R2_PUBLIC_BASE_URL.replace(/\/$/, "")}/${key}`;
+        const imageUrl =
+          `${env.R2_PUBLIC_BASE_URL.replace(/\/$/, "")}/${key}`;
 
         return json({ imageUrl }, cors);
       }
@@ -68,24 +78,25 @@ export default {
       });
 
     } catch (error) {
-      return json({
-        error: String(error?.message || error)
-      }, cors, 500);
+      return json(
+        {
+          error: String(error?.message || error)
+        },
+        cors,
+        500
+      );
     }
   }
 };
 
 function json(data, cors, status = 200) {
-  return new Response(
-    JSON.stringify(data),
-    {
-      status,
-      headers: {
-        "content-type": "application/json; charset=utf-8",
-        ...cors
-      }
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      ...cors
     }
-  );
+  });
 }
 
 async function buildQuizJson(DB) {
