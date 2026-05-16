@@ -51,20 +51,24 @@ export default {
         return json({ ok: true }, cors);
       }
 
-
       if (url.pathname === "/api/units" && request.method === "POST") {
         const body = await request.json();
         const course = String(body?.course || "").trim();
-        const title = String(body?.title || "").trim();
-        if (!course || !title) return json({ error: "course/title missing" }, cors, 400);
+        const rawTitle = String(body?.title || "").trim();
+        const canonicalTitle = normalizeUnitTitle(rawTitle);
+        if (!course || !canonicalTitle) return json({ error: "course/title missing" }, cors, 400);
+
         await env.DB.prepare(`
           INSERT INTO units (course, title, is_visible)
           VALUES (?, ?, 1)
           ON CONFLICT(course, title) DO UPDATE SET
-            is_visible=excluded.is_visible,
-            updated_at=CURRENT_TIMESTAMP
-        `).bind(course, title).run();
-        const row = await env.DB.prepare("SELECT id, course, title, is_visible FROM units WHERE course = ? AND title = ?").bind(course, title).first();
+            is_visible = excluded.is_visible,
+            updated_at = CURRENT_TIMESTAMP
+        `).bind(course, canonicalTitle).run();
+
+        const row = await env.DB.prepare(
+          "SELECT id, course, title, is_visible FROM units WHERE course = ? AND title = ?"
+        ).bind(course, canonicalTitle).first();
         if (!row?.id) return json({ error: "unit create failed" }, cors, 500);
 
         const courseIdRow = await env.DB.prepare(`
@@ -72,6 +76,7 @@ export default {
           FROM units
           WHERE course = ?
         `).bind(course).first();
+
         const courseId = Number(courseIdRow?.course_id || 0);
         const unitId = Number(row.id || 0);
         return json({
@@ -112,6 +117,48 @@ function json(data, cors, status = 200) {
   });
 }
 
+const CANONICAL_UNITS = [
+  "人間の尊厳と自立",
+  "介護の基本",
+  "コミュニケーション技術",
+  "社会の理解",
+  "認知症の理解",
+  "発達と老化の理解",
+  "障害の理解",
+  "こころとからだのしくみ1",
+  "こころとからだのしくみ2",
+  "介護過程1",
+  "介護過程2"
+];
+
+const UNIT_ORDER = new Map(CANONICAL_UNITS.map((name, i) => [name, i]));
+const UNIT_ALIAS = new Map([
+  ["老化の理解", "発達と老化の理解"],
+  ["こころとからだのしくみ", "こころとからだのしくみ1"],
+  ["こころとからだのしくみ①", "こころとからだのしくみ1"],
+  ["こころとからだのしくみ１", "こころとからだのしくみ1"],
+  ["こころとからだのしくみⅠ", "こころとからだのしくみ1"],
+  ["こころとからだのしくみ②", "こころとからだのしくみ2"],
+  ["こころとからだのしくみ２", "こころとからだのしくみ2"],
+  ["こころとからだのしくみⅡ", "こころとからだのしくみ2"],
+  ["介護過程①", "介護過程1"],
+  ["介護過程１", "介護過程1"],
+  ["介護過程Ⅰ", "介護過程1"],
+  ["介護過程②", "介護過程2"],
+  ["介護過程２", "介護過程2"],
+  ["介護過程Ⅱ", "介護過程2"]
+]);
+
+function normalizeUnitTitle(input) {
+  const raw = String(input || "").trim();
+  if (!raw) return raw;
+  const collapsed = raw.replace(/[ 　]+/g, "");
+  const alias = UNIT_ALIAS.get(collapsed);
+  if (alias) return alias;
+  const canonical = CANONICAL_UNITS.find((x) => x === collapsed);
+  return canonical || raw;
+}
+
 async function buildQuizJson(DB, admin = false) {
   const unitsResult = await DB.prepare(`
     WITH course_ids AS (
@@ -130,28 +177,28 @@ async function buildQuizJson(DB, admin = false) {
     if (!admin && Number(row.is_visible ?? 1) === 0) continue;
 
     const courseName = row.course;
-    const unitName = row.unit_title;
+    const canonicalUnitName = normalizeUnitTitle(row.unit_title);
     const courseId = Number(row.course_id);
     const unitId = Number(row.unit_id);
     if (!courseId || !unitId) {
-      throw new Error(`API response missing IDs: id not found for ${courseName} / ${unitName}`);
+      throw new Error(`API response missing IDs: id not found for ${courseName} / ${canonicalUnitName}`);
     }
 
     if (!courseMap.has(courseName)) {
       courseMap.set(courseName, {
         id: courseId,
-        courseId: courseId,
+        courseId,
         title: courseName,
         units: new Map()
       });
     }
 
     const courseObj = courseMap.get(courseName);
-    if (!courseObj.units.has(unitName)) {
-      courseObj.units.set(unitName, {
+    if (!courseObj.units.has(canonicalUnitName)) {
+      courseObj.units.set(canonicalUnitName, {
         id: unitId,
-        unitId: unitId,
-        title: unitName,
+        unitId,
+        title: canonicalUnitName,
         isVisible: Number(row.is_visible ?? 1) !== 0,
         questions: []
       });
@@ -167,32 +214,54 @@ async function buildQuizJson(DB, admin = false) {
 
   for (const row of (questionsResult.results || [])) {
     const courseObj = courseMap.get(row.course);
-    const unitObj = courseObj?.units?.get(row.unit);
-    if (!courseObj || !unitObj) continue;
-    unitObj.questions.push(rowToQuestion(row, courseObj.courseId, unitObj.unitId));
+    if (!courseObj) continue;
+
+    const normalizedUnitName = normalizeUnitTitle(row.unit);
+    let normalizedUnitObj = courseObj.units.get(normalizedUnitName);
+    if (!normalizedUnitObj) {
+      normalizedUnitObj = {
+        id: Number(row.unit_id),
+        unitId: Number(row.unit_id),
+        title: normalizedUnitName,
+        isVisible: true,
+        questions: []
+      };
+      courseObj.units.set(normalizedUnitName, normalizedUnitObj);
+    }
+
+    normalizedUnitObj.questions.push(
+      rowToQuestion(row, courseObj.courseId, normalizedUnitObj.unitId)
+    );
   }
 
   return {
     appTitle: "カイゴクイズ",
-    courses: [...courseMap.values()].map((c) => ({
-      id: c.id,
-      courseId: c.courseId,
-      title: c.title,
-      units: [...c.units.values()].map((u) => ({
-        id: u.id,
-        unitId: u.unitId,
-        title: u.title,
-        isVisible: u.isVisible,
-        questions: (u.questions || []).map((q) => ({
-          ...q,
-          courseId: q.courseId ?? c.courseId,
-          unitId: q.unitId ?? u.unitId
+    courses: [...courseMap.values()].map((course) => ({
+      id: course.id,
+      courseId: course.courseId,
+      title: course.title,
+      units: [...course.units.values()]
+        .sort((a, b) => {
+          const aOrder = UNIT_ORDER.has(a.title) ? UNIT_ORDER.get(a.title) : Number.MAX_SAFE_INTEGER;
+          const bOrder = UNIT_ORDER.has(b.title) ? UNIT_ORDER.get(b.title) : Number.MAX_SAFE_INTEGER;
+          if (aOrder !== bOrder) return aOrder - bOrder;
+          if (a.title !== b.title) return String(a.title).localeCompare(String(b.title), "ja");
+          return Number(a.unitId) - Number(b.unitId);
+        })
+        .map((unit) => ({
+          id: unit.id,
+          unitId: unit.unitId,
+          title: unit.title,
+          isVisible: unit.isVisible,
+          questions: (unit.questions || []).map((q) => ({
+            ...q,
+            courseId: q.courseId ?? course.courseId,
+            unitId: q.unitId ?? unit.unitId
+          }))
         }))
-      }))
     }))
   };
 }
-
 
 function rowToQuestion(row, courseId, unitId) {
   const choices = safeJson(row.choices_json, []);
@@ -214,7 +283,11 @@ function rowToQuestion(row, courseId, unitId) {
 }
 
 function safeJson(text, fallback) {
-  try { return JSON.parse(text || ""); } catch { return fallback; }
+  try {
+    return JSON.parse(text || "");
+  } catch {
+    return fallback;
+  }
 }
 
 async function upsertQuestion(DB, payload, forcedId = null) {
@@ -270,7 +343,11 @@ async function upsertQuestion(DB, payload, forcedId = null) {
       course, unit, explanation, image_url, sort_order
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(...values).run();
-  return { action: "inserted", id: Number(insertRes.meta?.last_row_id || 0), changes: Number(insertRes.meta?.changes || 0) };
+  return {
+    action: "inserted",
+    id: Number(insertRes.meta?.last_row_id || 0),
+    changes: Number(insertRes.meta?.changes || 0)
+  };
 }
 
 async function resolveCourseUnitNames(DB, courseIdRaw, unitIdRaw) {
