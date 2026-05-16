@@ -862,7 +862,11 @@ async function createQuestion(type) {
     return;
   }
 
-  const question = normalizeQuestion({ type });
+ const question = normalizeQuestion({
+  type,
+  courseId: curCourse()?.courseId ?? curCourse()?.id,
+  unitId: curUnit()?.unitId ?? curUnit()?.id
+});
 
   try {
     await applyEditorToQuestion(question);
