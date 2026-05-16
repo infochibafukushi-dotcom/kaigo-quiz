@@ -6,6 +6,7 @@ let questionIndex = 0;
 let lastResultShown = false;
 let editingImageData = "";
 let editAnswersCache = [];
+let isSavingQuestion = false;
 
 const app = document.getElementById("app");
 const API_BASE = window.KAIGO_QUIZ_API_BASE || "https://kaigo-quiz-save.info-chibafukushi.workers.dev";
@@ -29,8 +30,6 @@ async function loadData(options = {}){
       </div>
     `;
   }
-
-  if(!skipRender) renderUnits(0);
 }
 
 function ensureDbShape(data){
@@ -390,8 +389,16 @@ async function renderAdmin(){
     courseIndex = 0;
     unitIndex = 0;
   }
+  if(courseIndex < 0 || courseIndex >= db.courses.length) courseIndex = 0;
   const c = db.courses[courseIndex] || db.courses[0];
+  if(!Array.isArray(c.units)) c.units = [];
+  if(c.units.length === 0){
+    c.units.push({title:"新しい単元", questions:[]});
+    unitIndex = 0;
+  }
+  if(unitIndex < 0 || unitIndex >= c.units.length) unitIndex = 0;
   const u = c.units[unitIndex] || c.units[0];
+  if(!Array.isArray(u.questions)) u.questions = [];
 
   let html = `
     <div class="topbar">
@@ -497,8 +504,8 @@ function selectUnit(i){
 function addCoursePrompt(){
   const title = prompt("大分類名");
   if(!normalize(title)) return;
-  db.courses.push({title:normalize(title), units:[]});
-  saveLocalData(false);
+  db.courses.push({title:normalize(title), units:[{title:"新しい単元", questions:[]}]});
+  saveLocalData(false).catch(e => alert(`保存に失敗しました: ${e?.message || e}`));
   courseIndex = db.courses.length - 1;
   unitIndex = 0;
   renderAdmin();
@@ -752,14 +759,17 @@ async function syncAllQuestionsToApi(){
             headers:{"content-type":"application/json"},
             body:JSON.stringify(payload)
           }, "問題の作成に失敗しました");
-          if(saved?.id) q.id = saved.id;
+          if(saved?.id){
+            q.id = saved.id;
+            incomingIds.add(q.id);
+          }
         }
       }
     }
   }
   for(const id of currentIds){
     if(!incomingIds.has(id)){
-      await apiJson(`${API_BASE}/api/questions/${id}`, {method:"DELETE"}, "問題の削除に失敗しました");
+      await apiJson(`${API_BASE}/api/questions/${encodeURIComponent(String(id))}`, {method:"DELETE"}, "問題の削除に失敗しました");
     }
   }
   await loadData();
@@ -795,22 +805,32 @@ function renderAnswerInputsByBlankCount(){
   const typeEl = document.getElementById("editType");
   const list = document.getElementById("editAnswersList");
   const text = document.getElementById("editAnswers");
-  if(!typeEl || !list || !text) return;
+  const blankCountEl = document.getElementById("editBlankCount");
+  if(!typeEl || !list || !text || !blankCountEl) return;
   if(!isMultiBlankType(typeEl.value)) return;
 
   const currentListAnswers = [...list.querySelectorAll("input[data-answer-index]")].map((input) => normalize(input.value));
-  const textAnswers = text.value.split("\n").map(normalize).filter(Boolean);
+  const textAnswers = text.value.split("\n").map(normalize);
+
   if(currentListAnswers.length){
     currentListAnswers.forEach((value, index) => { editAnswersCache[index] = value; });
-  }else if(!editAnswersCache.length && textAnswers.length){
-    editAnswersCache = [...textAnswers];
+  }else if(textAnswers.length){
+    textAnswers.forEach((value, index) => { editAnswersCache[index] = value; });
+  }
+
+  const requestedBlankCount = parseInt(blankCountEl.value, 10);
+  const blankCount = Number.isFinite(requestedBlankCount) && requestedBlankCount > 0 ? requestedBlankCount : 1;
+  blankCountEl.value = String(blankCount);
+
+  editAnswersCache = editAnswersCache.slice(0, blankCount);
+  while(editAnswersCache.length < blankCount){
+    editAnswersCache.push("");
   }
 
   list.innerHTML = "";
-  const blankCount = Number(document.getElementById("editBlankCount")?.value) || 0;
   for(let i = 0; i < blankCount; i++){
     const v = editAnswersCache[i] || "";
-    list.innerHTML += `<label class="fill-multi-row">${esc(toCircledNumber(i + 1))}<input data-answer-index="${i}" value="${esc(v)}" placeholder="${esc(toCircledNumber(i + 1))}の正解" oninput="syncAnswerCacheFromInput(event)"></label>`;
+    list.innerHTML += `<label class="fill-multi-row">アンサー${esc(toCircledNumber(i + 1))}<input data-answer-index="${i}" value="${esc(v)}" placeholder="アンサー${esc(toCircledNumber(i + 1))}" oninput="syncAnswerCacheFromInput(event)"></label>`;
   }
   text.value = editAnswersCache.join("\n");
 }
@@ -833,6 +853,14 @@ function toggleAnswerInputMode(){
   const textActions = document.getElementById("editAnswersTextActions");
   const multiActions = document.getElementById("editAnswersMultiActions");
   if(!list || !text || !label || !textActions || !multiActions) return;
+
+  const listAnswers = [...list.querySelectorAll("input[data-answer-index]")].map((input) => normalize(input.value));
+  if(listAnswers.length){
+    editAnswersCache = listAnswers;
+  }else if(text.value){
+    editAnswersCache = text.value.split("\n").map(normalize);
+  }
+
   const isMultiBlank = isMultiBlankType(type);
   if(isMultiBlank){
     label.textContent = "正解（空欄順に入力）";
@@ -844,11 +872,11 @@ function toggleAnswerInputMode(){
     return;
   }
   label.textContent = "正解（1行に1つ。複数空欄は空欄順に入力。○×は ○ または ×）";
-  renderAnswerInputsByBlankCount();
   list.classList.add("hidden");
   text.classList.remove("hidden");
   textActions.classList.remove("hidden");
   multiActions.classList.add("hidden");
+  text.value = editAnswersCache.filter(Boolean).join("\n");
 }
 
 function appendFillMultiBlank(){
@@ -864,51 +892,76 @@ function appendFillMultiBlank(){
 }
 
 async function saveQuestion(index){
-  const type = document.getElementById("editType").value;
-  const question = normalize(document.getElementById("editQuestion").value);
-  const choices = document.getElementById("editChoices").value.split("\n").map(normalize).filter(Boolean);
-  let answers = document.getElementById("editAnswers").value.split("\n").map(normalize).filter(Boolean);
+  if(isSavingQuestion) return;
+  isSavingQuestion = true;
+  const saveButton = document.querySelector('button[onclick^="saveQuestion"]');
+  if(saveButton) saveButton.disabled = true;
 
-  const blankCount = Number(document.getElementById("editBlankCount").value) || 0;
-  if(type === "fill_multi" || type === "image_fill"){
-    answers = [...document.querySelectorAll("#editAnswersList input[data-answer-index]")].map(x => normalize(x.value));
-    if(answers.some(a => !a)) return alert("正解入力欄をすべて入力してください");
-    if(blankCount !== answers.length) return alert("空欄数と正解数が一致していません");
-  }
-  if(type !== "image_fill" && !question) return alert("問題文を入力してください");
-  if(answers.length === 0) return alert("正解を入力してください");
-
-  const existing = index === null ? null : db.courses[courseIndex].units[unitIndex].questions[index];
-  let q = {type, question};
-  if(existing?.id) q.id = existing.id;
-  if(editingImageData) q.imageUrl = editingImageData;
-  if(type === "fill" || type === "fill_multi"){
-    if(type === "fill_multi") q.blankCount = blankCount;
-    q.answers = answers;
-  }else if(type === "image_fill"){
-    q.blankCount = blankCount;
-    q.answers = answers;
-  }else if(type === "ox"){
-    q.answer = answers[0];
-  }else if(type === "choice"){
-    q.choices = choices;
-    q.answer = answers[0];
-  }else if(type === "multi"){
-    q.choices = choices;
-    q.answers = answers;
-  }
-
-  const arr = db.courses[courseIndex].units[unitIndex].questions;
-  if(index === null){
-    arr.push(q);
-  }else{
-    arr[index] = q;
-  }
   try{
-    await saveLocalData(false);
-    renderAdmin();
+    const type = document.getElementById("editType").value;
+    const question = normalize(document.getElementById("editQuestion").value);
+    const choices = document.getElementById("editChoices").value.split("\n").map(normalize).filter(Boolean);
+    let answers = document.getElementById("editAnswers").value.split("\n").map(normalize).filter(Boolean);
+
+    const blankCount = Number(document.getElementById("editBlankCount").value) || 0;
+    if(type === "fill_multi" || type === "image_fill"){
+      renderAnswerInputsByBlankCount();
+      answers = [...document.querySelectorAll("#editAnswersList input[data-answer-index]")].map(x => normalize(x.value));
+      if(answers.length !== blankCount) return alert("空欄数と正解数が一致していません");
+      if(answers.some(a => !a)) return alert("正解入力欄をすべて入力してください");
+    }
+    if(type !== "image_fill" && !question) return alert("問題文を入力してください");
+    if(answers.length === 0) return alert("正解を入力してください");
+
+    const unit = db.courses[courseIndex].units[unitIndex];
+    const existing = index === null ? null : unit.questions[index];
+    const sortOrder = index === null ? unit.questions.length : index;
+    let q = {type, question};
+    if(existing?.id) q.id = existing.id;
+    if(editingImageData) q.imageUrl = editingImageData;
+    if(type === "fill" || type === "fill_multi"){
+      if(type === "fill_multi") q.blankCount = blankCount;
+      q.answers = answers;
+    }else if(type === "image_fill"){
+      q.blankCount = blankCount;
+      q.answers = answers;
+    }else if(type === "ox"){
+      q.answer = answers[0];
+    }else if(type === "choice"){
+      q.choices = choices;
+      q.answer = answers[0];
+    }else if(type === "multi"){
+      q.choices = choices;
+      q.answers = answers;
+    }
+
+    const payload = {...q, course:db.courses[courseIndex].title, unit:unit.title, sortOrder};
+    if(q.id){
+      await apiJson(`${API_BASE}/api/questions/${encodeURIComponent(q.id)}`, {
+        method:"PUT",
+        headers:{"content-type":"application/json"},
+        body:JSON.stringify(payload)
+      }, "問題の更新に失敗しました");
+    }else{
+      const saved = await apiJson(`${API_BASE}/api/questions`, {
+        method:"POST",
+        headers:{"content-type":"application/json"},
+        body:JSON.stringify(payload)
+      }, "問題の作成に失敗しました");
+      if(saved?.id) q.id = saved.id;
+    }
+
+    if(index === null){
+      unit.questions.push(q);
+    }else{
+      unit.questions[index] = q;
+    }
+    await renderAdmin();
   }catch(e){
     alert(`保存に失敗しました: ${e?.message || e}`);
+  }finally{
+    isSavingQuestion = false;
+    if(saveButton) saveButton.disabled = false;
   }
 }
 
@@ -916,20 +969,12 @@ async function deleteQuestion(i){
   if(!confirm("この問題を削除しますか？")) return;
   const questions = db.courses[courseIndex].units[unitIndex].questions;
   const target = questions[i];
-  const id = Number(target?.id);
-  console.log("DELETE ID=", target?.id, "parsed=", id);
   try{
-    if(Number.isFinite(id) && id > 0){
-      const res = await fetch(`${API_BASE}/api/questions/${encodeURIComponent(id)}`, { method:"DELETE" });
-      if(!res.ok){
-        const body = await res.text();
-        alert(`削除に失敗しました (status=${res.status})\n${body || "(no response body)"}`);
-        return;
-      }
+    if(target?.id !== undefined && target?.id !== null && String(target.id).trim() !== ""){
+      await apiJson(`${API_BASE}/api/questions/${encodeURIComponent(String(target.id))}`, {method:"DELETE"}, "問題の削除に失敗しました");
     }
     questions.splice(i,1);
-    await saveLocalData(false);
-    renderAdmin();
+    await renderAdmin();
   }catch(e){
     alert(`削除に失敗しました: ${e?.message || e}`);
   }
