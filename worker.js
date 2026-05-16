@@ -1,39 +1,218 @@
-# カイゴクイズ
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    const cors = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS,PATCH",
+      "Access-Control-Allow-Headers": "Content-Type"
+    };
 
-介護福祉士実務者研修向けの一問一答WEBアプリです。
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: cors });
+    }
 
-## フロントエンド
+    try {
+      if (url.pathname === "/api/questions" && request.method === "GET") {
+        const admin = url.searchParams.get("admin") === "1";
+        const dbJson = await buildQuizJson(env.DB, admin);
+        return json(dbJson, cors);
+      }
 
-- GitHub Pages で配信
+      if (url.pathname === "/api/questions" && request.method === "POST") {
+        const body = await request.json();
+        if (body?.courseId == null || body?.courseId === "" || body?.unitId == null || body?.unitId === "") {
+          return json({ error: "courseId/unitId missing" }, cors, 400);
+        }
+        const result = await upsertQuestion(env.DB, body);
+        return json({ ok: true, ...result }, cors);
+      }
 
-## バックエンド（新構成）
+      if (url.pathname.startsWith("/api/questions/") && request.method === "PUT") {
+        const id = Number(url.pathname.split("/").pop());
+        if (!Number.isFinite(id) || id <= 0) return json({ error: "invalid id" }, cors, 400);
+        const body = await request.json();
+        if (body?.courseId == null || body?.courseId === "" || body?.unitId == null || body?.unitId === "") {
+          return json({ error: "courseId/unitId missing" }, cors, 400);
+        }
+        const result = await upsertQuestion(env.DB, body, id);
+        if (result.action !== "updated") return json({ error: "question not found" }, cors, 404);
+        return json({ ok: true, ...result }, cors);
+      }
 
-- Cloudflare Workers: API
-- Cloudflare D1: 問題データ永続化
-- Cloudflare R2: 問題画像保存
+      if (url.pathname.startsWith("/api/questions/") && request.method === "DELETE") {
+        const id = Number(url.pathname.split("/").pop());
+        if (!Number.isFinite(id) || id <= 0) return json({ error: "invalid id" }, cors, 400);
+        const res = await env.DB.prepare("DELETE FROM questions WHERE id = ?").bind(id).run();
+        if (!res.meta?.changes) return json({ error: "question not found" }, cors, 404);
+        return json({ ok: true }, cors);
+      }
 
-## セットアップ
+      if (url.pathname.startsWith("/api/units/") && request.method === "PATCH") {
+        const id = Number(url.pathname.split("/").pop());
+        if (!Number.isFinite(id) || id <= 0) return json({ error: "invalid unit id" }, cors, 400);
+        const body = await request.json();
+        const isVisible = body?.isVisible === false ? 0 : 1;
+        const res = await env.DB.prepare("UPDATE units SET is_visible=?, updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(isVisible, id).run();
+        if (!res.meta?.changes) return json({ error: "unit not found" }, cors, 404);
+        return json({ ok: true }, cors);
+      }
 
-1. `wrangler.toml` の `database_id` と `R2_PUBLIC_BASE_URL` を設定
-2. D1マイグレーションを実行
-   - `wrangler d1 execute kaigo-quiz --file migrations/0001_questions.sql`
-3. `questions.json` から移行SQLを生成
-   - `node scripts/migrate-questions-to-d1.mjs questions.json`
-4. 生成したSQLをD1へ反映
-   - `wrangler d1 execute kaigo-quiz --file d1-seed.sql`
-5. `app.js` の `API_BASE` を Workers URL に置換
-6. 画像アップロードが失敗する場合は Workers の環境変数 `R2_PUBLIC_BASE_URL` が設定されているか確認  
-   - 例: `https://pub-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.r2.dev`
+      return new Response("Not found", { status: 404, headers: cors });
+    } catch (error) {
+      const status = Number(error?.status) || 500;
+      return json({ error: String(error?.message || error) }, cors, status);
+    }
+  }
+};
 
-## questions.json（134問）を復元元としてD1へ復元する手順
+function json(data, cors, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8", ...cors }
+  });
+}
 
-1. seed SQLを再生成  
-   - `node scripts/migrate-questions-to-d1.mjs questions.json`
-2. D1へ反映（既存 `questions` を置換）  
-   - `wrangler d1 execute kaigo-quiz --file d1-seed.sql --remote`
-3. 件数照合  
-   - `node scripts/verify-restore-counts.mjs https://kaigo-quiz-save.info-chibafukushi.workers.dev questions.json`
-4. 期待値  
-   - `jsonCount = 134`
-   - `seedInsertCount = 134`
-   - `apiCount = 134`
+async function buildQuizJson(DB, admin = false) {
+  const { results } = await DB.prepare(`
+    SELECT q.*, u.id AS unit_id, u.is_visible
+    FROM questions q
+    LEFT JOIN units u ON u.course = q.course AND u.title = q.unit
+    ORDER BY q.course ASC, q.unit ASC, q.sort_order ASC, q.id ASC
+  `).all();
+
+  const courseMap = new Map();
+  for (const row of results) {
+    if (!admin && Number(row.is_visible ?? 1) === 0) continue;
+
+    const courseName = row.course || "未分類";
+    const unitName = row.unit || "未分類";
+    const unitId = row.unit_id;
+    if (!unitId) {
+      throw new Error(`API response missing IDs: unit id not found for ${courseName} / ${unitName}`);
+    }
+
+    if (!courseMap.has(courseName)) {
+      courseMap.set(courseName, {
+        courseId: Number(unitId),
+        title: courseName,
+        units: new Map()
+      });
+    }
+
+    const courseObj = courseMap.get(courseName);
+    if (!courseObj.units.has(unitName)) {
+      courseObj.units.set(unitName, {
+        id: Number(unitId),
+        unitId: Number(unitId),
+        title: unitName,
+        isVisible: Number(row.is_visible ?? 1) !== 0,
+        questions: []
+      });
+    }
+
+    courseObj.units.get(unitName).questions.push(rowToQuestion(row, courseObj.courseId, Number(unitId)));
+  }
+
+  return {
+    appTitle: "カイゴクイズ",
+    courses: [...courseMap.values()].map((c) => ({
+      id: c.courseId,
+      courseId: c.courseId,
+      title: c.title,
+      units: [...c.units.values()]
+    }))
+  };
+}
+
+function rowToQuestion(row, courseId, unitId) {
+  const choices = safeJson(row.choices_json, []);
+  const answers = safeJson(row.answer_json, []);
+  const q = {
+    id: row.id,
+    courseId,
+    unitId,
+    type: row.type,
+    question: row.question || "",
+    explanation: row.explanation || ""
+  };
+  if (choices.length) q.choices = choices;
+  if (row.blank_count) q.blankCount = row.blank_count;
+  if (row.image_url) q.imageUrl = row.image_url;
+  if (row.type === "ox" || row.type === "choice") q.answer = answers[0] || "";
+  else q.answers = answers;
+  return q;
+}
+
+function safeJson(text, fallback) {
+  try { return JSON.parse(text || ""); } catch { return fallback; }
+}
+
+async function upsertQuestion(DB, payload, forcedId = null) {
+  const ids = await resolveCourseUnitNames(DB, payload.courseId, payload.unitId);
+  const answers = payload.type === "ox" || payload.type === "choice"
+    ? [payload.answer || ""]
+    : (payload.answers || []);
+
+  const values = [
+    payload.type,
+    payload.question || "",
+    JSON.stringify(payload.choices || []),
+    JSON.stringify(answers),
+    Number(payload.blankCount || 0),
+    ids.course,
+    ids.unit,
+    payload.explanation || "",
+    payload.imageUrl || payload.imageData || "",
+    Number(payload.sortOrder || 0)
+  ];
+
+  if (forcedId !== null) {
+    const res = await DB.prepare(`
+      UPDATE questions
+      SET type=?, question=?, choices_json=?, answer_json=?, blank_count=?,
+          course=?, unit=?, explanation=?, image_url=?, sort_order=?,
+          updated_at=CURRENT_TIMESTAMP
+      WHERE id=?
+    `).bind(...values, forcedId).run();
+    return { action: "updated", id: forcedId, changes: Number(res.meta?.changes || 0) };
+  }
+
+  const payloadId = Number(payload.id);
+  if (Number.isFinite(payloadId) && payloadId > 0) {
+    const res = await DB.prepare(`
+      UPDATE questions
+      SET type=?, question=?, choices_json=?, answer_json=?, blank_count=?,
+          course=?, unit=?, explanation=?, image_url=?, sort_order=?,
+          updated_at=CURRENT_TIMESTAMP
+      WHERE id=?
+    `).bind(...values, payloadId).run();
+    if (Number(res.meta?.changes || 0) > 0) {
+      return { action: "updated", id: payloadId, changes: Number(res.meta?.changes || 0) };
+    }
+  }
+
+  const insertRes = await DB.prepare(`
+    INSERT INTO questions (
+      type, question, choices_json, answer_json, blank_count,
+      course, unit, explanation, image_url, sort_order
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(...values).run();
+  return { action: "inserted", id: Number(insertRes.meta?.last_row_id || 0), changes: Number(insertRes.meta?.changes || 0) };
+}
+
+async function resolveCourseUnitNames(DB, courseIdRaw, unitIdRaw) {
+  const courseId = Number(courseIdRaw);
+  const unitId = Number(unitIdRaw);
+  if (!Number.isFinite(courseId) || courseId <= 0 || !Number.isFinite(unitId) || unitId <= 0) {
+    const err = new Error("courseId/unitId missing");
+    err.status = 400;
+    throw err;
+  }
+  const unitRow = await DB.prepare("SELECT id, course, title FROM units WHERE id = ?").bind(unitId).first();
+  if (!unitRow) {
+    const err = new Error("unit not found");
+    err.status = 400;
+    throw err;
+  }
+  return { course: unitRow.course, unit: unitRow.title };
+}
