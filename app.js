@@ -541,7 +541,7 @@ function editQuestion(index){
 
     <div class="card">
       <label>形式</label>
-      <select id="editType" onchange="renderAnswerInputsByBlankCount()">
+      <select id="editType" onchange="toggleAnswerInputMode()">
         <option value="fill" ${q.type==="fill"?"selected":""}>記述</option>
         <option value="fill_multi" ${q.type==="fill_multi"?"selected":""}>記述（複数空欄）</option>
         <option value="image_fill" ${q.type==="image_fill"?"selected":""}>画像穴埋め</option>
@@ -576,12 +576,14 @@ function editQuestion(index){
         <button type="button" class="danger small" onclick="removeChoice()">選択肢削除</button>
       </div>
 
-      <label>正解（1行に1つ。複数空欄は空欄順に入力。○×は ○ または ×）</label>
-      <textarea id="editAnswers" class="${q.type==="fill_multi" || q.type==="image_fill" ? "hidden" : ""}">${esc(q.type==="choice" || q.type==="ox" ? (q.answer || "") : (q.answers || []).join("\\n"))}</textarea>
-      <div id="editAnswersList"></div>
-      <div class="row">
+      <label id="editAnswersLabel">正解（1行に1つ。複数空欄は空欄順に入力。○×は ○ または ×）</label>
+      <textarea id="editAnswers">${esc(q.type==="choice" || q.type==="ox" ? (q.answer || "") : (q.answers || []).join("\\n"))}</textarea>
+      <div id="editAnswersList" class="hidden"></div>
+      <div id="editAnswersTextActions" class="row">
         <button type="button" class="secondary small" onclick="appendAnswer()">正解追加</button>
         <button type="button" class="danger small" onclick="removeAnswer()">正解削除</button>
+      </div>
+      <div id="editAnswersMultiActions" class="row hidden">
         <button type="button" class="secondary small" onclick="appendFillMultiBlank()">fill_multi 空欄追加</button>
       </div>
 
@@ -590,7 +592,7 @@ function editQuestion(index){
   `;
   app.innerHTML = html;
   initImageUploader();
-  renderAnswerInputsByBlankCount();
+  toggleAnswerInputMode();
 }
 
 function triggerImageSelect(){
@@ -755,17 +757,38 @@ function renderAnswerInputsByBlankCount(){
   const savedAnswers = currentListAnswers.length ? currentListAnswers : textAnswers;
 
   list.innerHTML = "";
-  if(!useList){
-    text.value = savedAnswers.join("\n");
-    text.classList.remove("hidden");
-    return;
-  }
-  text.classList.add("hidden");
   const blankCount = Number(document.getElementById("editBlankCount")?.value) || 0;
   for(let i = 0; i < blankCount; i++){
     const v = savedAnswers[i] || "";
     list.innerHTML += `<label class="fill-multi-row">${esc(toCircledNumber(i + 1))}<input data-answer-index="${i}" value="${esc(v)}" placeholder="${esc(toCircledNumber(i + 1))}の正解"></label>`;
   }
+  text.value = savedAnswers.join("\n");
+}
+
+function toggleAnswerInputMode(){
+  const type = document.getElementById("editType")?.value;
+  const list = document.getElementById("editAnswersList");
+  const text = document.getElementById("editAnswers");
+  const label = document.getElementById("editAnswersLabel");
+  const textActions = document.getElementById("editAnswersTextActions");
+  const multiActions = document.getElementById("editAnswersMultiActions");
+  if(!list || !text || !label || !textActions || !multiActions) return;
+  const isMultiBlank = type === "fill_multi" || type === "image_fill";
+  if(isMultiBlank){
+    label.textContent = "正解（空欄順に入力）";
+    text.classList.add("hidden");
+    list.classList.remove("hidden");
+    textActions.classList.add("hidden");
+    multiActions.classList.remove("hidden");
+    renderAnswerInputsByBlankCount();
+    return;
+  }
+  label.textContent = "正解（1行に1つ。複数空欄は空欄順に入力。○×は ○ または ×）";
+  renderAnswerInputsByBlankCount();
+  list.classList.add("hidden");
+  text.classList.remove("hidden");
+  textActions.classList.remove("hidden");
+  multiActions.classList.add("hidden");
 }
 
 function appendFillMultiBlank(){
