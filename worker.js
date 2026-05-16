@@ -169,7 +169,22 @@ async function buildQuizJson(DB, admin = false) {
     SELECT u.id AS unit_id, u.course, u.title AS unit_title, u.is_visible, c.course_id
     FROM units u
     INNER JOIN course_ids c ON c.course = u.course
-    ORDER BY u.course ASC, u.title ASC, u.id ASC
+    ORDER BY u.course ASC,
+      CASE u.title
+        WHEN '人間の尊厳と自立' THEN 1
+        WHEN '介護の基本' THEN 2
+        WHEN 'コミュニケーション技術' THEN 3
+        WHEN '社会の理解' THEN 4
+        WHEN '認知症の理解' THEN 5
+        WHEN '発達と老化の理解' THEN 6
+        WHEN '障害の理解' THEN 7
+        WHEN 'こころとからだのしくみ1' THEN 8
+        WHEN 'こころとからだのしくみ2' THEN 9
+        WHEN '介護過程1' THEN 10
+        WHEN '介護過程2' THEN 11
+        ELSE 999
+      END ASC,
+      u.id ASC
   `).all();
 
   const courseMap = new Map();
@@ -209,7 +224,22 @@ async function buildQuizJson(DB, admin = false) {
     SELECT q.*, u.id AS unit_id
     FROM questions q
     INNER JOIN units u ON u.course = q.course AND u.title = q.unit
-    ORDER BY q.course ASC, q.unit ASC, q.sort_order ASC, q.id ASC
+    ORDER BY q.course ASC,
+      CASE q.unit
+        WHEN '人間の尊厳と自立' THEN 1
+        WHEN '介護の基本' THEN 2
+        WHEN 'コミュニケーション技術' THEN 3
+        WHEN '社会の理解' THEN 4
+        WHEN '認知症の理解' THEN 5
+        WHEN '発達と老化の理解' THEN 6
+        WHEN '障害の理解' THEN 7
+        WHEN 'こころとからだのしくみ1' THEN 8
+        WHEN 'こころとからだのしくみ2' THEN 9
+        WHEN '介護過程1' THEN 10
+        WHEN '介護過程2' THEN 11
+        ELSE 999
+      END ASC,
+      q.sort_order ASC, q.id ASC
   `).all();
 
   for (const row of (questionsResult.results || [])) {
