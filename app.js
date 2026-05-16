@@ -67,8 +67,8 @@ function buildQuestionPayload(q,ctx={}){
     imageData:imageUrl,
     blankCount:Math.max(1,Number(q.blankCount)||1)
   };
-  const courseId=q.courseId??ctx.courseId;
-  const unitId=q.unitId??ctx.unitId;
+  const courseId=q.courseId??ctx.courseId??ctx.courseIndex;
+  const unitId=q.unitId??ctx.unitId??ctx.unitIndex;
   if(courseId!==undefined&&courseId!==null&&courseId!=="")payload.courseId=courseId;
   if(unitId!==undefined&&unitId!==null&&unitId!=="")payload.unitId=unitId;
   Object.keys(payload).forEach((k)=>{if(payload[k]===undefined||payload[k]===null)delete payload[k];});
