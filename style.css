@@ -154,7 +154,28 @@ textarea {
 .hidden {
   display: none;
 }
+.blank-row {
+  margin-bottom: 8px;
+}
 
+.blank-result {
+  margin-top: 4px;
+  font-size: 14px;
+}
+
+.blank-result.blank-ok {
+  color: #15803d;
+  font-weight: 700;
+}
+
+.blank-result.blank-ng {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
+.blank-result.blank-pending {
+  color: #6b7280;
+}
 @media (min-width: 720px) {
   .grid.two {
     grid-template-columns: 1fr 1fr;
