@@ -109,7 +109,7 @@ function renderQuestion() {
 }
 function judgeAndShow(ok, expectedText) {
   const el = document.getElementById("result");
-  el.innerHTML = `<p>${ok ? "✅正解" : "❌不正解"}</p><p>正解: ${escapeHtml(expectedText)}</p><button data-act="next-q">次へ</button>`;
+  el.innerHTML = `<p class="${ok ? "result-ok" : "result-ng"}">${ok ? "✅正解" : "❌不正解"}</p><p>正解: ${escapeHtml(expectedText)}</p><button data-act="next-q">次へ</button>`;
 }
 function renderComplete() {
   app.innerHTML = `<div class="card"><h2>単元終了</h2><button data-act="back-units">単元へ戻る</button></div>`;
