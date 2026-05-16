@@ -659,8 +659,7 @@ async function applyEditorToQuestion(question) {
   const selectedImage = imageInput?.files?.[0];
 
   if (selectedImage) {
-    alert("画像保存OFF");
-question.imageData = "";
+    question.imageData = await readFileAsDataURL(selectedImage);
   }
 
   if (question.type === "ox" || question.type === "choice" || question.type === "fill") {
@@ -707,8 +706,8 @@ function buildQuestionPayload(question, context = {}) {
     answers: Array.isArray(question.answers) ? question.answers.map(norm) : [],
     answer: norm(question.answer),
     explanation: norm(question.explanation),
-    imageUrl: "",
-imageData: "",
+    imageUrl: rawImage,
+    imageData: rawImage,
     blankCount: Math.max(1, Number(question.blankCount) || 1)
   };
 
