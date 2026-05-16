@@ -809,8 +809,8 @@ async function saveQuestion(qi) {
     }
 
     const resolvedCourseId = course?.courseId ?? course?.id ?? ensuredUnit?.courseId ?? question.courseId;
-    const resolvedUnitId = ensuredUnit?.unitId ?? ensuredUnit?.id ?? question.unitId;
-
+   const resolvedUnitId = ensuredUnit?.unitId ?? ensuredUnit?.id ?? unit.unitId ?? unit.id ?? question.unitId;
+    
     if (!resolvedCourseId || !resolvedUnitId) {
       console.error("SAVE BLOCKED: unit id missing", { course, unit: ensuredUnit, question });
       alert("保存先単元IDがありません。単元を作成し直してください。");
