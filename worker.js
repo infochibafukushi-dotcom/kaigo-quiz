@@ -39,43 +39,78 @@ export default {
       if (url.pathname === "/api/upload" && request.method === "POST") {
         const formData = await request.formData();
         const file = formData.get("file");
-        if (!file) return json({ error: "file is required" }, cors, 400);
+
+        if (!file) {
+          return json({ error: "file is required" }, cors, 400);
+        }
+
         const ext = (file.name?.split(".").pop() || "bin").toLowerCase();
         const key = `quiz-images/${crypto.randomUUID()}.${ext}`;
-        await env.IMAGES.put(key, await file.arrayBuffer(), {
-          httpMetadata: { contentType: file.type || "application/octet-stream" }
-        });
+
+        await env.QUIZ_IMAGES.put(
+          key,
+          await file.arrayBuffer(),
+          {
+            httpMetadata: {
+              contentType: file.type || "application/octet-stream"
+            }
+          }
+        );
+
         const imageUrl = `${env.R2_PUBLIC_BASE_URL.replace(/\/$/, "")}/${key}`;
+
         return json({ imageUrl }, cors);
       }
 
-      return new Response("Not found", { status: 404, headers: cors });
+      return new Response("Not found", {
+        status: 404,
+        headers: cors
+      });
+
     } catch (error) {
-      return json({ error: String(error?.message || error) }, cors, 500);
+      return json({
+        error: String(error?.message || error)
+      }, cors, 500);
     }
   }
 };
 
 function json(data, cors, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8", ...cors }
-  });
+  return new Response(
+    JSON.stringify(data),
+    {
+      status,
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        ...cors
+      }
+    }
+  );
 }
 
 async function buildQuizJson(DB) {
   const { results } = await DB.prepare(`
-    SELECT * FROM questions
+    SELECT *
+    FROM questions
     ORDER BY course ASC, unit ASC, sort_order ASC, id ASC
   `).all();
 
   const courseMap = new Map();
+
   for (const row of results) {
     const courseName = row.course || "未分類";
     const unitName = row.unit || "未分類";
-    if (!courseMap.has(courseName)) courseMap.set(courseName, new Map());
+
+    if (!courseMap.has(courseName)) {
+      courseMap.set(courseName, new Map());
+    }
+
     const unitMap = courseMap.get(courseName);
-    if (!unitMap.has(unitName)) unitMap.set(unitName, []);
+
+    if (!unitMap.has(unitName)) {
+      unitMap.set(unitName, []);
+    }
+
     unitMap.get(unitName).push(rowToQuestion(row));
   }
 
@@ -83,7 +118,10 @@ async function buildQuizJson(DB) {
     appTitle: "カイゴクイズ",
     courses: [...courseMap.entries()].map(([course, units]) => ({
       title: course,
-      units: [...units.entries()].map(([unit, questions]) => ({ title: unit, questions }))
+      units: [...units.entries()].map(([unit, questions]) => ({
+        title: unit,
+        questions
+      }))
     }))
   };
 }
@@ -91,28 +129,48 @@ async function buildQuizJson(DB) {
 function rowToQuestion(row) {
   const choices = safeJson(row.choices_json, []);
   const answers = safeJson(row.answer_json, []);
+
   const q = {
     id: row.id,
     type: row.type,
     question: row.question || "",
     explanation: row.explanation || ""
   };
-  if (choices.length) q.choices = choices;
-  if (row.blank_count) q.blankCount = row.blank_count;
-  if (row.image_url) q.imageUrl = row.image_url;
-  if (row.type === "ox" || row.type === "choice") q.answer = answers[0] || "";
-  else q.answers = answers;
+
+  if (choices.length) {
+    q.choices = choices;
+  }
+
+  if (row.blank_count) {
+    q.blankCount = row.blank_count;
+  }
+
+  if (row.image_url) {
+    q.imageUrl = row.image_url;
+  }
+
+  if (row.type === "ox" || row.type === "choice") {
+    q.answer = answers[0] || "";
+  } else {
+    q.answers = answers;
+  }
+
   return q;
 }
 
 function safeJson(text, fallback) {
-  try { return JSON.parse(text || ""); } catch { return fallback; }
+  try {
+    return JSON.parse(text || "");
+  } catch {
+    return fallback;
+  }
 }
 
 async function upsertQuestion(DB, payload, forcedId = null) {
-  const answers = payload.type === "ox" || payload.type === "choice"
-    ? [payload.answer || ""]
-    : (payload.answers || []);
+  const answers =
+    payload.type === "ox" || payload.type === "choice"
+      ? [payload.answer || ""]
+      : (payload.answers || []);
 
   const values = [
     payload.type,
@@ -130,29 +188,58 @@ async function upsertQuestion(DB, payload, forcedId = null) {
   if (forcedId !== null) {
     await DB.prepare(`
       UPDATE questions
-      SET type=?, question=?, choices_json=?, answer_json=?, blank_count=?,
-          course=?, unit=?, explanation=?, image_url=?, sort_order=?,
-          updated_at=CURRENT_TIMESTAMP
-      WHERE id=?
+      SET
+        type = ?,
+        question = ?,
+        choices_json = ?,
+        answer_json = ?,
+        blank_count = ?,
+        course = ?,
+        unit = ?,
+        explanation = ?,
+        image_url = ?,
+        sort_order = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
     `).bind(...values, forcedId).run();
+
     return;
   }
 
   if (payload.id) {
     await DB.prepare(`
       UPDATE questions
-      SET type=?, question=?, choices_json=?, answer_json=?, blank_count=?,
-          course=?, unit=?, explanation=?, image_url=?, sort_order=?,
-          updated_at=CURRENT_TIMESTAMP
-      WHERE id=?
+      SET
+        type = ?,
+        question = ?,
+        choices_json = ?,
+        answer_json = ?,
+        blank_count = ?,
+        course = ?,
+        unit = ?,
+        explanation = ?,
+        image_url = ?,
+        sort_order = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
     `).bind(...values, payload.id).run();
+
     return;
   }
 
   await DB.prepare(`
     INSERT INTO questions (
-      type, question, choices_json, answer_json, blank_count,
-      course, unit, explanation, image_url, sort_order
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      type,
+      question,
+      choices_json,
+      answer_json,
+      blank_count,
+      course,
+      unit,
+      explanation,
+      image_url,
+      sort_order
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(...values).run();
 }
