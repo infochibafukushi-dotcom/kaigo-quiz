@@ -1009,9 +1009,7 @@ else if (action === "back-units") {
   expected.forEach((_, index) => {
     const value = got[index] || "";
     const answerText = String(expected[index] || "");
-    const patterns = answerText
-      .split("|")
-      .map((v) => norm(v));
+    const patterns = answerText.split("|").map((v) => norm(v));
 
     const el = document.querySelector(`[data-blank-result="${index}"]`);
     if (!el) return;
@@ -1026,7 +1024,7 @@ else if (action === "back-units") {
     } else {
       ok = false;
       el.className = "blank-result blank-ng";
-　　　el.textContent = `❌ 正解: ${patterns[0] || answerText}`;
+      el.textContent = "❌ 正解: " + (patterns[0] || answerText);
     }
   });
 
