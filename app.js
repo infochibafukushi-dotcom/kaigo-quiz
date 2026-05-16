@@ -7,28 +7,36 @@ let lastResultShown = false;
 let editingImageData = "";
 
 const app = document.getElementById("app");
-const STORAGE_KEY = "kaigo_quiz_data";
+const API_BASE = window.KAIGO_QUIZ_API_BASE || "https://kaigo-quiz-save.info-chibafukushi.workers.dev";
 
 async function loadData(){
-  const res = await fetch("questions.json?ts=" + Date.now());
-  db = await res.json();
-  const saved = loadLocalData();
-  if(saved) db = saved;
-  renderUnits(0);
-}
-
-function loadLocalData(){
   try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if(!raw) return null;
-    return JSON.parse(raw);
+    const res = await fetch(`${API_BASE}/api/questions?ts=` + Date.now());
+    if(!res.ok) throw new Error(`APIエラー: ${res.status}`);
+    db = ensureDbShape(await res.json());
+    renderUnits(0);
   }catch(e){
-    return null;
+    db = ensureDbShape(null);
+    app.innerHTML = `
+      <div class="card">
+        <h1>データ読み込みエラー</h1>
+        <p class="sub">${esc(String(e?.message || e))}</p>
+        <button onclick="loadData()">再試行</button>
+        <button class="secondary" onclick="renderAdmin()">管理画面を開く</button>
+      </div>
+    `;
   }
 }
 
-function saveLocalData(showAlert = true){
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+function ensureDbShape(data){
+  const safe = data && typeof data === "object" ? data : {};
+  if(!Array.isArray(safe.courses)) safe.courses = [];
+  safe.appTitle = normalize(safe.appTitle || "カイゴクイズ");
+  return safe;
+}
+
+async function saveLocalData(showAlert = true){
+  await syncAllQuestionsToApi();
   if(showAlert){
     alert("保存しました");
   }
@@ -36,9 +44,8 @@ function saveLocalData(showAlert = true){
 
 async function resetToInitialData(){
   if(!confirm("初期データに戻しますか？")) return;
-  localStorage.removeItem(STORAGE_KEY);
   await loadData();
-  alert("初期データに戻しました");
+  alert("最新データを再読み込みしました");
 }
 
 function esc(s){
@@ -112,6 +119,21 @@ function toCircledNumber(n){
 }
 
 function renderUnits(ci = 0){
+  db = ensureDbShape(db);
+  if(db.courses.length === 0){
+    app.innerHTML = `
+      <div class="topbar">
+        <div class="left-actions">
+          <button class="secondary" onclick="renderAdmin()">⚙ 管理</button>
+        </div>
+      </div>
+      <div class="card">
+        <h1 class="page-title">${esc(db.appTitle || "カイゴクイズ")}</h1>
+        <p class="sub">問題がまだありません。管理画面から大分類・単元・問題を追加してください。</p>
+      </div>
+    `;
+    return;
+  }
   courseIndex = ci;
   const c = db.courses[ci];
   let html = `
@@ -355,6 +377,12 @@ function nextQuestion(){
 }
 
 function renderAdmin(){
+  db = ensureDbShape(db);
+  if(db.courses.length === 0){
+    db.courses.push({title:"新しい大分類", units:[{title:"新しい単元", questions:[]}]});
+    courseIndex = 0;
+    unitIndex = 0;
+  }
   const c = db.courses[courseIndex] || db.courses[0];
   const u = c.units[unitIndex] || c.units[0];
 
@@ -362,7 +390,7 @@ function renderAdmin(){
     <div class="topbar">
       <div>
         <h1 class="page-title">管理画面</h1>
-        <div class="sub">問題と答えの編集ができます。編集後はJSON出力してください。</div>
+        <div class="sub">問題と答えの編集ができます。編集後は保存してください。</div>
       </div>
       <button class="secondary" onclick="renderUnits(${courseIndex})">戻る</button>
     </div>
@@ -377,7 +405,7 @@ function renderAdmin(){
         <button class="ok" onclick="saveLocalData()">保存</button>
         <button class="danger" onclick="resetToInitialData()">初期データに戻す</button>
       </div>
-      <div class="notice">GitHub Pagesではブラウザ内で直接サーバー保存できません。編集後にJSON出力し、questions.jsonをGitHubに上書きしてください。</div>
+      <div class="notice">保存ボタンでサーバーへ永続保存されます。別端末にも反映されます。</div>
     </div>
 
     <div class="grid-admin">
@@ -601,12 +629,12 @@ function isAllowedImageType(file){
 
 function loadQuestionImageFile(file){
   if(!isAllowedImageType(file)) return alert("対応形式は jpg / jpeg / png / webp のみです");
-  const reader = new FileReader();
-  reader.onload = () => {
-    editingImageData = String(reader.result || "");
-    renderUploadedImagePreview();
-  };
-  reader.readAsDataURL(file);
+  uploadImageToApi(file)
+    .then((url) => {
+      editingImageData = url;
+      renderUploadedImagePreview();
+    })
+    .catch((e) => alert(e.message || "画像アップロードに失敗しました"));
 }
 
 function renderUploadedImagePreview(){
@@ -627,6 +655,42 @@ function clearUploadedImage(){
   const input = document.getElementById("editImageFile");
   if(input) input.value = "";
   renderUploadedImagePreview();
+}
+
+async function uploadImageToApi(file){
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API_BASE}/api/upload`, { method:"POST", body:form });
+  if(!res.ok) throw new Error("画像アップロードに失敗しました");
+  const json = await res.json();
+  return json.imageUrl || "";
+}
+
+async function syncAllQuestionsToApi(){
+  const current = await fetch(`${API_BASE}/api/questions`).then(r => r.json());
+  const currentIds = new Set();
+  (current.courses || []).forEach(c => (c.units || []).forEach(u => (u.questions || []).forEach(q => currentIds.add(q.id))));
+  const incomingIds = new Set();
+  for(const course of db.courses){
+    for(const unit of course.units){
+      for(let i = 0; i < unit.questions.length; i++){
+        const q = unit.questions[i];
+        if(q.id) incomingIds.add(q.id);
+        const payload = {...q, course:course.title, unit:unit.title, sortOrder:i};
+        await fetch(`${API_BASE}/api/questions`, {
+          method:"POST",
+          headers:{"content-type":"application/json"},
+          body:JSON.stringify(payload)
+        });
+      }
+    }
+  }
+  for(const id of currentIds){
+    if(!incomingIds.has(id)){
+      await fetch(`${API_BASE}/api/questions/${id}`, {method:"DELETE"});
+    }
+  }
+  await loadData();
 }
 
 
