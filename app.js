@@ -43,10 +43,34 @@ function renderEditQuestion(qi){const q=curUnit().questions[qi];app.innerHTML=`<
 function renderCreateForType(type){const q=nQ({type,blankCount:1});app.innerHTML=`<div class="topbar"><button data-act="admin-back">戻る</button></div><div class="card"><h3>新規問題: ${esc(TLABEL[type])}</h3>${typeFields(q)}<button data-act="create-q" data-type="${type}">保存</button></div>`;}
 
 
-function syncPreviewToQuestion(q){const img=document.querySelector('#img-preview img');q.imageData=img?String(img.getAttribute('src')||''):"";}
+function isPreviewImageSrc(v){const s=String(v||"").trim().toLowerCase();return s.startsWith("blob:")||s.startsWith("data:")||s.startsWith("object:");}
+function syncPreviewToQuestion(q){
+  const img=document.querySelector('#img-preview img');
+  const src=img?String(img.getAttribute('src')||'').trim():"";
+  if(!src){q.imageData="";return;}
+  if(isPreviewImageSrc(src))return;
+  q.imageData=src;
+}
 function applyEditorToQuestion(q){q.question=norm(document.getElementById("eq-question")?.value);q.explanation=norm(document.getElementById("eq-exp")?.value);q.imageData=q.imageData||"";syncPreviewToQuestion(q);if(q.type==="ox"||q.type==="choice"||q.type==="fill")q.answer=norm(document.getElementById("eq-answer")?.value);if(q.type==="choice"||q.type==="multi")q.choices=(document.getElementById("eq-choices")?.value||"").split("\n").map(norm).filter(Boolean);if(q.type==="multi")q.answers=(document.getElementById("eq-answers-text")?.value||"").split("\n").map(norm).filter(Boolean);if(isMB(q.type)){q.blankCount=Math.max(1,Number(document.getElementById("eq-blankCount")?.value)||1);q.answers=[...document.querySelectorAll(".edit-answer")].map(x=>norm(x.value)).slice(0,q.blankCount);while(q.answers.length<q.blankCount)q.answers.push("");if(q.answers.length!==q.blankCount)throw new Error("blankCount mismatch");}}
+function buildQuestionPayload(q){
+  const imageUrl=isPreviewImageSrc(q.imageData)?"":String(q.imageData||"").trim();
+  return {
+    id:q.id??null,
+    type:norm(q.type||"fill"),
+    question:norm(q.question),
+    choices:Array.isArray(q.choices)?q.choices.map(norm).filter(Boolean):[],
+    answers:Array.isArray(q.answers)?q.answers.map(norm):[],
+    answer:norm(q.answer),
+    explanation:norm(q.explanation),
+    imageUrl,
+    imageData:imageUrl,
+    blankCount:Math.max(1,Number(q.blankCount)||1),
+    courseId:q.courseId??null,
+    unitId:q.unitId??null
+  };
+}
 
-async function saveQuestion(qi){if(saving)return;const q=curUnit().questions[qi];try{applyEditorToQuestion(q);}catch{alert("blankCount と answers 数が一致しないため保存できません。");return;}saving=true;try{const body=JSON.stringify({courseIndex,unitIndex,questionIndex:qi,question:q});if(q.id)await api(`/api/questions/${q.id}`,{method:"PUT",headers:{"content-type":"application/json"},body});else await api(`/api/questions`,{method:"POST",headers:{"content-type":"application/json"},body});await loadData(true);renderAdmin();}catch(e){alert(`保存エラー: ${e.message}`);}finally{saving=false;}}
+async function saveQuestion(qi){if(saving)return;const q=curUnit().questions[qi];try{applyEditorToQuestion(q);}catch{alert("blankCount と answers 数が一致しないため保存できません。");return;}saving=true;try{const payloadQuestion=buildQuestionPayload(q);const body=JSON.stringify({courseIndex,unitIndex,questionIndex:qi,question:payloadQuestion});if(q.id)await api(`/api/questions/${q.id}`,{method:"PUT",headers:{"content-type":"application/json"},body});else await api(`/api/questions`,{method:"POST",headers:{"content-type":"application/json"},body});await loadData(true);renderAdmin();}catch(e){alert(`保存エラー: ${e.message}`);}finally{saving=false;}}
 async function createQuestion(type){const q=nQ({type});try{applyEditorToQuestion(q);}catch{alert("blankCount と answers 数が一致しないため保存できません。");return;}curUnit().questions.push(q);await saveQuestion(curUnit().questions.length-1);}
 async function deleteQuestion(qi){if(deleting)return;const q=curUnit().questions[qi];if(!confirm("削除しますか？"))return;deleting=true;try{if(q.id)await api(`/api/questions/${q.id}`,{method:"DELETE"});else curUnit().questions.splice(qi,1);await loadData(true);renderAdmin();}catch(e){alert(`削除エラー: ${e.message}`);}finally{deleting=false;}}
 
