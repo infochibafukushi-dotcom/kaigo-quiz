@@ -7,7 +7,7 @@ let lastResultShown = false;
 let editingImageData = "";
 
 const app = document.getElementById("app");
-const API_BASE = "https://REPLACE_WITH_YOUR_WORKER_URL";
+const API_BASE = "https://kaigo-quiz-save.info-chibafukushi.workers.dev";
 
 async function loadData(){
   const res = await fetch(`${API_BASE}/api/questions?ts=` + Date.now());
