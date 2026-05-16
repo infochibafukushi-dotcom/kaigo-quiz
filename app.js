@@ -52,10 +52,10 @@ function syncPreviewToQuestion(q){
   q.imageData=src;
 }
 function applyEditorToQuestion(q){q.question=norm(document.getElementById("eq-question")?.value);q.explanation=norm(document.getElementById("eq-exp")?.value);q.imageData=q.imageData||"";syncPreviewToQuestion(q);if(q.type==="ox"||q.type==="choice"||q.type==="fill")q.answer=norm(document.getElementById("eq-answer")?.value);if(q.type==="choice"||q.type==="multi")q.choices=(document.getElementById("eq-choices")?.value||"").split("\n").map(norm).filter(Boolean);if(q.type==="multi")q.answers=(document.getElementById("eq-answers-text")?.value||"").split("\n").map(norm).filter(Boolean);if(isMB(q.type)){q.blankCount=Math.max(1,Number(document.getElementById("eq-blankCount")?.value)||1);q.answers=[...document.querySelectorAll(".edit-answer")].map(x=>norm(x.value)).slice(0,q.blankCount);while(q.answers.length<q.blankCount)q.answers.push("");if(q.answers.length!==q.blankCount)throw new Error("blankCount mismatch");}}
-function buildQuestionPayload(q){
+function buildQuestionPayload(q,ctx={}){
   const imageUrl=isPreviewImageSrc(q.imageData)?"":String(q.imageData||"").trim();
-  return {
-    id:q.id??null,
+  const payload={
+    id:q.id,
     type:norm(q.type||"fill"),
     question:norm(q.question),
     choices:Array.isArray(q.choices)?q.choices.map(norm).filter(Boolean):[],
@@ -64,13 +64,17 @@ function buildQuestionPayload(q){
     explanation:norm(q.explanation),
     imageUrl,
     imageData:imageUrl,
-    blankCount:Math.max(1,Number(q.blankCount)||1),
-    courseId:q.courseId??null,
-    unitId:q.unitId??null
+    blankCount:Math.max(1,Number(q.blankCount)||1)
   };
+  const courseId=q.courseId??ctx.courseId;
+  const unitId=q.unitId??ctx.unitId;
+  if(courseId!==undefined&&courseId!==null&&courseId!=="")payload.courseId=courseId;
+  if(unitId!==undefined&&unitId!==null&&unitId!=="")payload.unitId=unitId;
+  Object.keys(payload).forEach((k)=>{if(payload[k]===undefined||payload[k]===null)delete payload[k];});
+  return payload;
 }
 
-async function saveQuestion(qi){if(saving)return;const q=curUnit().questions[qi];try{applyEditorToQuestion(q);}catch{alert("blankCount と answers 数が一致しないため保存できません。");return;}saving=true;try{const payloadQuestion=buildQuestionPayload(q);const payload={courseIndex,unitIndex,questionIndex:qi,question:payloadQuestion};console.log("SAVE PAYLOAD",payload);console.log(JSON.stringify(payload,null,2));const path=q.id?`/api/questions/${q.id}`:`/api/questions`;const method=q.id?"PUT":"POST";const res=await fetch(`${API_BASE}${path}`,{method,headers:{"content-type":"application/json"},body:JSON.stringify(payload)});const text=await res.text();if(!res.ok){console.error(text);throw new Error(`${res.status} ${res.statusText}`);}if(text){try{JSON.parse(text);}catch(_){}}await loadData(true);renderAdmin();}catch(e){alert(`保存エラー: ${e.message}`);}finally{saving=false;}}
+async function saveQuestion(qi){if(saving)return;const q=curUnit().questions[qi];try{applyEditorToQuestion(q);}catch{alert("blankCount と answers 数が一致しないため保存できません。");return;}saving=true;try{const course=db.courses[courseIndex]||{};const unit=course.units?.[unitIndex]||{};const payload=buildQuestionPayload(q,{courseId:course.id,unitId:unit.id});console.log("SAVE PAYLOAD",payload);console.log(JSON.stringify(payload,null,2));const path=q.id?`/api/questions/${q.id}`:`/api/questions`;const method=q.id?"PUT":"POST";const res=await fetch(`${API_BASE}${path}`,{method,headers:{"content-type":"application/json"},body:JSON.stringify(payload)});const text=await res.text();if(!res.ok){console.error(text);throw new Error(`${res.status} ${res.statusText}`);}if(text){try{JSON.parse(text);}catch(_){}}await loadData(true);renderAdmin();}catch(e){alert(`保存エラー: ${e.message}`);}finally{saving=false;}}
 async function createQuestion(type){const q=nQ({type});try{applyEditorToQuestion(q);}catch{alert("blankCount と answers 数が一致しないため保存できません。");return;}curUnit().questions.push(q);await saveQuestion(curUnit().questions.length-1);}
 async function deleteQuestion(qi){if(deleting)return;const q=curUnit().questions[qi];if(!confirm("削除しますか？"))return;deleting=true;try{if(q.id)await api(`/api/questions/${q.id}`,{method:"DELETE"});else curUnit().questions.splice(qi,1);await loadData(true);renderAdmin();}catch(e){alert(`削除エラー: ${e.message}`);}finally{deleting=false;}}
 
