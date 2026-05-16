@@ -77,25 +77,24 @@ function json(data, cors, status = 200) {
 }
 
 async function buildQuizJson(DB, admin = false) {
-  const { results } = await DB.prepare(`
+  const unitsResult = await DB.prepare(`
     WITH course_ids AS (
       SELECT course, MIN(id) AS course_id
       FROM units
       GROUP BY course
     )
-    SELECT q.*, u.id AS unit_id, u.is_visible, c.course_id
-    FROM questions q
-    INNER JOIN units u ON u.course = q.course AND u.title = q.unit
-    INNER JOIN course_ids c ON c.course = q.course
-    ORDER BY q.course ASC, q.unit ASC, q.sort_order ASC, q.id ASC
+    SELECT u.id AS unit_id, u.course, u.title AS unit_title, u.is_visible, c.course_id
+    FROM units u
+    INNER JOIN course_ids c ON c.course = u.course
+    ORDER BY u.course ASC, u.title ASC, u.id ASC
   `).all();
 
   const courseMap = new Map();
-  for (const row of results) {
+  for (const row of (unitsResult.results || [])) {
     if (!admin && Number(row.is_visible ?? 1) === 0) continue;
 
     const courseName = row.course;
-    const unitName = row.unit;
+    const unitName = row.unit_title;
     const courseId = Number(row.course_id);
     const unitId = Number(row.unit_id);
     if (!courseId || !unitId) {
@@ -105,7 +104,7 @@ async function buildQuizJson(DB, admin = false) {
     if (!courseMap.has(courseName)) {
       courseMap.set(courseName, {
         id: courseId,
-        courseId,
+        courseId: courseId,
         title: courseName,
         units: new Map()
       });
@@ -115,14 +114,26 @@ async function buildQuizJson(DB, admin = false) {
     if (!courseObj.units.has(unitName)) {
       courseObj.units.set(unitName, {
         id: unitId,
-        unitId,
+        unitId: unitId,
         title: unitName,
         isVisible: Number(row.is_visible ?? 1) !== 0,
         questions: []
       });
     }
+  }
 
-    courseObj.units.get(unitName).questions.push(rowToQuestion(row, courseId, unitId));
+  const questionsResult = await DB.prepare(`
+    SELECT q.*, u.id AS unit_id
+    FROM questions q
+    INNER JOIN units u ON u.course = q.course AND u.title = q.unit
+    ORDER BY q.course ASC, q.unit ASC, q.sort_order ASC, q.id ASC
+  `).all();
+
+  for (const row of (questionsResult.results || [])) {
+    const courseObj = courseMap.get(row.course);
+    const unitObj = courseObj?.units?.get(row.unit);
+    if (!courseObj || !unitObj) continue;
+    unitObj.questions.push(rowToQuestion(row, courseObj.courseId, unitObj.unitId));
   }
 
   return {
@@ -131,10 +142,21 @@ async function buildQuizJson(DB, admin = false) {
       id: c.id,
       courseId: c.courseId,
       title: c.title,
-      units: [...c.units.values()]
+      units: [...c.units.values()].map((u) => ({
+        id: u.id,
+        unitId: u.unitId,
+        title: u.title,
+        isVisible: u.isVisible,
+        questions: (u.questions || []).map((q) => ({
+          ...q,
+          courseId: q.courseId ?? c.courseId,
+          unitId: q.unitId ?? u.unitId
+        }))
+      }))
     }))
   };
 }
+
 
 function rowToQuestion(row, courseId, unitId) {
   const choices = safeJson(row.choices_json, []);
