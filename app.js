@@ -1032,18 +1032,6 @@ else if (action === "back-units") {
 
   judge(ok, expected.join(", "));
 }
-    const question = curQuestion();
-    const got = [...document.querySelectorAll(".blank-input")].map((item) => norm(item.value));
-   const expected = getAnswersForMultiBlank(question);
-const ok =
-  got.length === expected.length &&
-  got.every((value, index) => {
-    const patterns = String(expected[index] || "")
-      .split("|")
-      .map(v => norm(v));
-    return patterns.includes(value);
-  });
-judge(ok, expected.join(", "));
   } else if (action === "admin-back") {
     editingQuestionId = null;
     renderAdmin();
