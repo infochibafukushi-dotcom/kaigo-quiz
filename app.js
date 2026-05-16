@@ -5,16 +5,19 @@ let unitIndex = 0;
 let questionIndex = 0;
 let lastResultShown = false;
 let editingImageData = "";
+let editAnswersCache = [];
 
 const app = document.getElementById("app");
 const API_BASE = window.KAIGO_QUIZ_API_BASE || "https://kaigo-quiz-save.info-chibafukushi.workers.dev";
 
-async function loadData(){
+async function loadData(options = {}){
+  const admin = Boolean(options.admin);
+  const skipRender = Boolean(options.skipRender);
   try{
-    const res = await fetch(`${API_BASE}/api/questions?ts=` + Date.now());
+    const res = await fetch(`${API_BASE}/api/questions?ts=${Date.now()}&admin=${admin ? "1" : "0"}`);
     if(!res.ok) throw new Error(`APIエラー: ${res.status}`);
     db = ensureDbShape(await res.json());
-    renderUnits(0);
+    if(!skipRender) renderUnits(0);
   }catch(e){
     db = ensureDbShape(null);
     app.innerHTML = `
@@ -27,7 +30,7 @@ async function loadData(){
     `;
   }
 
-  renderUnits(0);
+  if(!skipRender) renderUnits(0);
 }
 
 function ensureDbShape(data){
@@ -155,6 +158,7 @@ function renderUnits(ci = 0){
   `;
 
   c.units.forEach((u, i)=>{
+    if(u.isVisible === false) return;
     html += `
       <div class="card unit-card" onclick="startQuiz(${ci},${i})">
         <div>
@@ -378,7 +382,8 @@ function nextQuestion(){
   renderQuestion();
 }
 
-function renderAdmin(){
+async function renderAdmin(){
+  await loadData({ admin: true, skipRender: true });
   db = ensureDbShape(db);
   if(db.courses.length === 0){
     db.courses.push({title:"新しい大分類", units:[{title:"新しい単元", questions:[]}]});
@@ -416,11 +421,13 @@ function renderAdmin(){
   `;
 
   c.units.forEach((unit, i)=>{
+    const visibilityLabel = unit.isVisible === false ? "非表示" : "表示中";
     html += `
       <div class="list-item ${i === unitIndex ? "active" : ""}">
-        <strong>${esc(unit.title)}</strong><br>
+        <strong>${esc(unit.title)}（${visibilityLabel}）</strong><br>
         <span class="sub">${unit.questions.length}問</span><br>
         <button class="small" onclick="selectUnit(${i})">選択</button>
+        <button class="small secondary" onclick="toggleUnitVisibility(${i})">${unit.isVisible === false ? "表示にする" : "非表示にする"}</button>
         <button class="small secondary" onclick="renameUnit(${i})">名称変更</button>
         <button class="small danger" onclick="deleteUnit(${i})">削除</button>
       </div>
@@ -461,6 +468,19 @@ function renderAdmin(){
 
   html += `</div></div>`;
   app.innerHTML = html;
+}
+
+async function toggleUnitVisibility(index){
+  const c = db.courses[courseIndex];
+  const u = c?.units?.[index];
+  if(!u?.id) return alert("単元IDが見つかりません");
+  const nextVisible = u.isVisible === false;
+  await apiJson(`${API_BASE}/api/units/${encodeURIComponent(u.id)}/visibility`, {
+    method:"PATCH",
+    headers:{"content-type":"application/json"},
+    body:JSON.stringify({ is_visible: nextVisible })
+  }, "単元表示状態の更新に失敗しました");
+  await renderAdmin();
 }
 
 function answerText(q){
@@ -529,6 +549,9 @@ function editQuestion(index){
   const unit = db.courses[courseIndex].units[unitIndex];
   const q = isNew ? {type:"fill", question:"", answers:[""]} : unit.questions[index];
   editingImageData = normalize(q.imageData || q.imageUrl || q.image || "");
+  editAnswersCache = q.type === "choice" || q.type === "ox"
+    ? [normalize(q.answer || "")]
+    : (q.answers || []).map(normalize);
 
   let html = `
     <div class="topbar">
@@ -773,15 +796,29 @@ function renderAnswerInputsByBlankCount(){
 
   const currentListAnswers = [...list.querySelectorAll("input[data-answer-index]")].map((input) => normalize(input.value));
   const textAnswers = text.value.split("\n").map(normalize).filter(Boolean);
-  const savedAnswers = currentListAnswers.length ? currentListAnswers : textAnswers;
+  if(currentListAnswers.length){
+    currentListAnswers.forEach((value, index) => { editAnswersCache[index] = value; });
+  }else if(!editAnswersCache.length && textAnswers.length){
+    editAnswersCache = [...textAnswers];
+  }
 
   list.innerHTML = "";
   const blankCount = Number(document.getElementById("editBlankCount")?.value) || 0;
   for(let i = 0; i < blankCount; i++){
-    const v = savedAnswers[i] || "";
-    list.innerHTML += `<label class="fill-multi-row">${esc(toCircledNumber(i + 1))}<input data-answer-index="${i}" value="${esc(v)}" placeholder="${esc(toCircledNumber(i + 1))}の正解"></label>`;
+    const v = editAnswersCache[i] || "";
+    list.innerHTML += `<label class="fill-multi-row">${esc(toCircledNumber(i + 1))}<input data-answer-index="${i}" value="${esc(v)}" placeholder="${esc(toCircledNumber(i + 1))}の正解" oninput="syncAnswerCacheFromInput(event)"></label>`;
   }
-  text.value = savedAnswers.join("\n");
+  text.value = editAnswersCache.join("\n");
+}
+
+function syncAnswerCacheFromInput(event){
+  const input = event?.target;
+  if(!input) return;
+  const index = Number(input.dataset.answerIndex);
+  if(Number.isNaN(index)) return;
+  editAnswersCache[index] = normalize(input.value);
+  const text = document.getElementById("editAnswers");
+  if(text) text.value = editAnswersCache.join("\n");
 }
 
 function toggleAnswerInputMode(){

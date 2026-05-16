@@ -3,7 +3,7 @@ export default {
     const url = new URL(request.url);
     const cors = {
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
+      "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,PATCH,OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type"
     };
 
@@ -13,8 +13,27 @@ export default {
 
     try {
       if (url.pathname === "/api/questions" && request.method === "GET") {
-        const dbJson = await buildQuizJson(env.DB);
+        const isAdmin = url.searchParams.get("admin") === "1";
+        const dbJson = await buildQuizJson(env.DB, { includeHiddenUnits: isAdmin });
         return json(dbJson, cors);
+      }
+      if (url.pathname === "/api/units" && request.method === "GET") {
+        const isAdmin = url.searchParams.get("admin") === "1";
+        const units = await listUnits(env.DB, { includeHidden: isAdmin });
+        return json({ units }, cors);
+      }
+      if (url.pathname.startsWith("/api/units/") && url.pathname.endsWith("/visibility") && request.method === "PATCH") {
+        const parts = url.pathname.split("/");
+        const id = Number(parts[3]);
+        if (!Number.isFinite(id) || id <= 0) return json({ error: "invalid id" }, cors, 400);
+        const body = await request.json();
+        const isVisible = body?.is_visible;
+        if (typeof isVisible !== "boolean") return json({ error: "is_visible must be boolean" }, cors, 400);
+        const res = await env.DB.prepare(`
+          UPDATE units SET is_visible=?, updated_at=CURRENT_TIMESTAMP WHERE id=?
+        `).bind(isVisible ? 1 : 0, id).run();
+        if (!res.meta?.changes) return json({ error: "unit not found" }, cors, 404);
+        return json({ ok: true }, cors);
       }
 
       if (url.pathname === "/api/questions" && request.method === "POST") {
@@ -79,10 +98,15 @@ function json(data, cors, status = 200) {
   });
 }
 
-async function buildQuizJson(DB) {
+async function buildQuizJson(DB, options = {}) {
+  const includeHiddenUnits = Boolean(options.includeHiddenUnits);
   const { results } = await DB.prepare(`
-    SELECT * FROM questions
-    ORDER BY course ASC, unit ASC, sort_order ASC, id ASC
+    SELECT q.*, u.id AS unit_id, COALESCE(u.is_visible, 1) AS unit_is_visible
+    FROM questions q
+    LEFT JOIN units u
+      ON u.course = q.course AND u.title = q.unit
+    ${includeHiddenUnits ? "" : "WHERE COALESCE(u.is_visible, 1) = 1"}
+    ORDER BY q.course ASC, q.unit ASC, q.sort_order ASC, q.id ASC
   `).all();
 
   const courseMap = new Map();
@@ -92,16 +116,41 @@ async function buildQuizJson(DB) {
     if (!courseMap.has(courseName)) courseMap.set(courseName, new Map());
     const unitMap = courseMap.get(courseName);
     if (!unitMap.has(unitName)) unitMap.set(unitName, []);
-    unitMap.get(unitName).push(rowToQuestion(row));
+    const list = unitMap.get(unitName);
+    if (!list.length) {
+      list.meta = { id: row.unit_id || null, isVisible: Boolean(row.unit_is_visible) };
+    }
+    list.push(rowToQuestion(row));
   }
 
   return {
     appTitle: "カイゴクイズ",
     courses: [...courseMap.entries()].map(([course, units]) => ({
       title: course,
-      units: [...units.entries()].map(([unit, questions]) => ({ title: unit, questions }))
+      units: [...units.entries()].map(([unit, questions]) => ({
+        id: questions.meta?.id || null,
+        title: unit,
+        isVisible: questions.meta?.isVisible !== false,
+        questions
+      }))
     }))
   };
+}
+
+async function listUnits(DB, options = {}) {
+  const includeHidden = Boolean(options.includeHidden);
+  const { results } = await DB.prepare(`
+    SELECT id, course, title, is_visible
+    FROM units
+    ${includeHidden ? "" : "WHERE is_visible = 1"}
+    ORDER BY course ASC, title ASC, id ASC
+  `).all();
+  return results.map((row) => ({
+    id: row.id,
+    course: row.course,
+    title: row.title,
+    is_visible: Boolean(row.is_visible)
+  }));
 }
 
 function rowToQuestion(row) {
@@ -126,6 +175,10 @@ function safeJson(text, fallback) {
 }
 
 async function upsertQuestion(DB, payload, forcedId = null) {
+  await DB.prepare(`
+    INSERT OR IGNORE INTO units (course, title, is_visible) VALUES (?, ?, 1)
+  `).bind(payload.course || "未分類", payload.unit || "未分類").run();
+
   const answers = payload.type === "ox" || payload.type === "choice"
     ? [payload.answer || ""]
     : (payload.answers || []);
