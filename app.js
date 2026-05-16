@@ -1,250 +1,71 @@
 const API_BASE = window.KAIGO_QUIZ_API_BASE || "https://kaigo-quiz-save.info-chibafukushi.workers.dev";
-
 let db = { appTitle: "カイゴクイズ", courses: [] };
-let courseIndex = 0;
-let unitIndex = 0;
-let questionIndex = 0;
-let view = "home";
-let saving = false;
-let deleting = false;
-
+let courseIndex = 0, unitIndex = 0, questionIndex = 0;
+let saving = false, deleting = false;
 const app = document.getElementById("app");
 
-function escapeHtml(v) {
-  return String(v ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
-}
-function norm(v) { return String(v ?? "").trim(); }
-function ensureDbShape(data) {
-  const safe = data && typeof data === "object" ? data : {};
-  if (!Array.isArray(safe.courses)) safe.courses = [];
-  safe.courses = safe.courses.map((c) => ({
-    ...c,
-    title: c?.title || "",
-    units: Array.isArray(c?.units) ? c.units.map((u) => ({
-      ...u,
-      title: u?.title || "",
-      isVisible: u?.isVisible !== false,
-      questions: Array.isArray(u?.questions) ? u.questions.map(normalizeQuestion) : []
-    })) : []
-  }));
-  return { appTitle: safe.appTitle || "カイゴクイズ", courses: safe.courses };
-}
-function normalizeQuestion(q) {
-  const qq = q && typeof q === "object" ? { ...q } : {};
-  qq.type = qq.type || "fill";
-  qq.question = qq.question || "";
-  qq.explanation = qq.explanation || "";
-  qq.choices = Array.isArray(qq.choices) ? qq.choices : [];
-  qq.answer = qq.answer ?? "";
-  qq.answers = Array.isArray(qq.answers) ? qq.answers : [];
-  qq.blankCount = Number(qq.blankCount) > 0 ? Number(qq.blankCount) : (qq.answers.length || 1);
-  return qq;
-}
-function isMultiBlankType(t) { return t === "fill_multi" || t === "image_fill"; }
-function getAnswers(q) {
-  if (isMultiBlankType(q.type)) {
-    const count = Math.max(1, Number(q.blankCount) || 1);
-    const src = Array.isArray(q.answers) ? q.answers.slice() : [];
-    while (src.length < count) src.push("");
-    return src.slice(0, count);
-  }
-  return [norm(q.answer)];
-}
+const TYPES = ["choice","ox","multi","fill","fill_multi","image_fill"];
+const TLABEL = {choice:"4択",ox:"○×",multi:"複数選択",fill:"記述",fill_multi:"空欄補充",image_fill:"画像穴埋め"};
 
-async function api(path, init = {}) {
-  const res = await fetch(`${API_BASE}${path}`, init);
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  const ct = res.headers.get("content-type") || "";
-  return ct.includes("application/json") ? res.json() : res.text();
-}
+const esc=(v)=>String(v??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+const norm=(v)=>String(v??"").trim();
+const isMB=(t)=>t==="fill_multi"||t==="image_fill";
+const nQ=(q={})=>({type:q.type||"fill",question:q.question||"",explanation:q.explanation||"",choices:Array.isArray(q.choices)?q.choices:[],answer:q.answer??"",answers:Array.isArray(q.answers)?q.answers:[],blankCount:Number(q.blankCount)>0?Number(q.blankCount):(Array.isArray(q.answers)&&q.answers.length)||1,imageData:q.imageData||q.image||q.imageUrl||"",id:q.id});
+const eDB=(d)=>({appTitle:d?.appTitle||"カイゴクイズ",courses:Array.isArray(d?.courses)?d.courses.map(c=>({title:c?.title||"",units:Array.isArray(c?.units)?c.units.map(u=>({title:u?.title||"",isVisible:u?.isVisible!==false,questions:Array.isArray(u?.questions)?u.questions.map(nQ):[]})):[]})):[]});
+const gAns=(q)=>{const n=Math.max(1,Number(q.blankCount)||1),a=Array.isArray(q.answers)?q.answers.slice():[];while(a.length<n)a.push("");return a.slice(0,n)};
 
-async function loadData(admin = false) {
-  const data = await api(`/api/questions${admin ? "?admin=1" : ""}`);
-  db = ensureDbShape(data);
-}
+async function api(path, init={}){const r=await fetch(`${API_BASE}${path}`,init);if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);const ct=r.headers.get("content-type")||"";return ct.includes("application/json")?r.json():r.text();}
+async function loadData(admin=false){db=eDB(await api(`/api/questions${admin?"?admin=1":""}`));}
 
-function renderHome() {
-  view = "home";
-  let html = `<div class="topbar"><button class="secondary" data-act="open-admin">⚙ 管理</button></div><div class="card"><h1>${escapeHtml(db.appTitle)}</h1><p>科目を選択してください</p></div>`;
-  db.courses.forEach((c, ci) => {
-    html += `<div class="card unit-card" data-act="open-course" data-ci="${ci}"><div>${escapeHtml(c.title)}</div><div class="sub">›</div></div>`;
-  });
-  app.innerHTML = html;
-}
-function renderUnits(ci) {
-  view = "units";
-  courseIndex = ci;
-  const c = db.courses[ci];
-  let html = `<div class="topbar"><button class="secondary" data-act="home">戻る</button><button class="secondary" data-act="open-admin">⚙ 管理</button></div><div class="card"><h2>${escapeHtml(c.title)}</h2></div>`;
-  c.units.forEach((u, ui) => {
-    if (u.isVisible === false) return;
-    html += `<div class="card unit-card" data-act="start-quiz" data-ci="${ci}" data-ui="${ui}"><div>${escapeHtml(u.title)}</div><div class="sub">${u.questions.length}問</div></div>`;
-  });
-  app.innerHTML = html;
-}
-function renderQuestion() {
-  view = "quiz";
-  const unit = db.courses[courseIndex].units[unitIndex];
-  const q = unit.questions[questionIndex];
-  const qImg = norm(q.imageData || q.imageUrl || q.image);
-  let html = `<div class="topbar"><button class="secondary" data-act="back-units">単元へ</button></div><div class="card"><h3>${escapeHtml(unit.title)} ${questionIndex + 1}/${unit.questions.length}</h3>`;
-  if (qImg) html += `<img class="quiz-image" src="${escapeHtml(qImg)}" alt="問題画像">`;
-  html += `<p>${escapeHtml(q.question)}</p>`;
-  if (q.type === "ox") {
-    html += `<button data-act="ans-single" data-v="○">○</button><button data-act="ans-single" data-v="×">×</button>`;
-  } else if (q.type === "choice") {
-    q.choices.forEach((c) => { html += `<button data-act="ans-single" data-v="${escapeHtml(c)}">${escapeHtml(c)}</button>`; });
-  } else if (q.type === "multi") {
-    q.choices.forEach((c) => { html += `<label><input type="checkbox" class="multi-answer" value="${escapeHtml(c)}">${escapeHtml(c)}</label>`; });
-    html += `<button data-act="ans-multi">回答</button>`;
-  } else if (q.type === "fill") {
-    html += `<input id="answerInput" /><button data-act="ans-fill">回答</button>`;
-  } else if (isMultiBlankType(q.type)) {
-    const answers = getAnswers(q);
-    answers.forEach((_, i) => { html += `<input class="blank-input" data-i="${i}" placeholder="${i + 1}">`; });
-    html += `<button data-act="ans-fill-multi">回答</button>`;
-  }
-  html += `<div id="result"></div></div>`;
-  app.innerHTML = html;
-}
-function judgeAndShow(ok, expectedText) {
-  const el = document.getElementById("result");
-  el.innerHTML = `<p class="${ok ? "result-ok" : "result-ng"}">${ok ? "✅正解" : "❌不正解"}</p><p>正解: ${escapeHtml(expectedText)}</p><button data-act="next-q">次へ</button>`;
-}
-function renderComplete() {
-  app.innerHTML = `<div class="card"><h2>単元終了</h2><button data-act="back-units">単元へ戻る</button></div>`;
-}
+function curUnit(){return db.courses[courseIndex]?.units?.[unitIndex];}
+function curQ(){return curUnit()?.questions?.[questionIndex];}
 
-function renderAdmin() {
-  view = "admin";
-  const c = db.courses[courseIndex] || db.courses[0];
-  courseIndex = Math.max(0, db.courses.indexOf(c));
-  const u = c?.units?.[unitIndex] || c?.units?.[0];
-  unitIndex = Math.max(0, c?.units?.indexOf(u));
-  let html = `<div class="topbar"><button class="secondary" data-act="home">TOP</button><button data-act="save-all" ${saving ? "disabled" : ""}>保存</button></div>`;
-  html += `<div class="card"><h3>管理画面</h3><label>科目<select id="adminCourse">`;
-  db.courses.forEach((x, i) => { html += `<option value="${i}" ${i === courseIndex ? "selected" : ""}>${escapeHtml(x.title)}</option>`; });
-  html += `</select></label><label>単元<select id="adminUnit">`;
-  (db.courses[courseIndex]?.units || []).forEach((x, i) => { html += `<option value="${i}" ${i === unitIndex ? "selected" : ""}>${escapeHtml(x.title)}</option>`; });
-  html += `</select></label><button data-act="add-q">問題追加</button><button data-act="export-json">JSON出力</button><input type="file" id="importJson" accept="application/json"></div>`;
-  html += `<div class="card"><h4>問題一覧</h4>`;
-  const unit = db.courses[courseIndex]?.units?.[unitIndex];
-  (unit?.questions || []).forEach((q, i) => {
-    html += `<div class="card"><div>${i + 1}. ${escapeHtml(q.type)} - ${escapeHtml(q.question.slice(0, 40))}</div><button data-act="edit-q" data-qi="${i}">編集</button><button data-act="del-q" data-qi="${i}" ${deleting ? "disabled" : ""}>削除</button></div>`;
-  });
-  html += `</div>`;
-  app.innerHTML = html;
-}
+function renderHome(){let h=`<div class="topbar"><button class="secondary" data-act="open-admin">⚙ 管理</button></div><div class="card"><h1>${esc(db.appTitle)}</h1><p>科目を選択</p></div>`;db.courses.forEach((c,ci)=>h+=`<div class="card unit-card" data-act="open-course" data-ci="${ci}"><div>📚 ${esc(c.title)}</div><div>›</div></div>`);app.innerHTML=h;}
+function renderUnits(ci){courseIndex=ci;const c=db.courses[ci];let h=`<div class="topbar"><button class="secondary" data-act="home">戻る</button><button class="secondary" data-act="open-admin">⚙ 管理</button></div><div class="card"><h2>${esc(c.title)}</h2></div>`;(c.units||[]).forEach((u,ui)=>{if(u.isVisible===false)return;h+=`<div class="card unit-card" data-act="start-quiz" data-ci="${ci}" data-ui="${ui}"><div>${esc(u.title)}</div><div class="sub">${u.questions.length}問 ›</div></div>`});app.innerHTML=h;}
+function renderQuestion(){const u=curUnit(),q=curQ();let h=`<div class="topbar"><button class="secondary" data-act="back-units">単元へ</button></div><div class="card"><h3>${esc(u.title)} ${questionIndex+1}/${u.questions.length}</h3>`;if(q.imageData)h+=`<img class="quiz-image" src="${esc(q.imageData)}">`;h+=`<p>${esc(q.question)}</p>`;if(q.type==="ox")h+=`<button data-act="ans-single" data-v="○">○</button><button data-act="ans-single" data-v="×">×</button>`;else if(q.type==="choice")q.choices.forEach(c=>h+=`<button data-act="ans-single" data-v="${esc(c)}">${esc(c)}</button>`);else if(q.type==="multi"){q.choices.forEach(c=>h+=`<label><input type="checkbox" class="multi-answer" value="${esc(c)}">${esc(c)}</label>`);h+=`<button data-act="ans-multi">回答</button>`;} else if(q.type==="fill")h+=`<input id="answerInput"><button data-act="ans-fill">回答</button>`;else {for(let i=0;i<Math.max(1,Number(q.blankCount)||1);i++)h+=`<input class="blank-input" placeholder="アンサー${i+1}">`;h+=`<button data-act="ans-fill-multi">回答</button>`;}h+=`<div id="result"></div></div>`;app.innerHTML=h;}
+function judge(ok,exp){document.getElementById("result").innerHTML=`<p class="${ok?"result-ok":"result-ng"}">${ok?"✅正解":"❌不正解"}</p><p>正解: ${esc(exp)}</p><button data-act="next-q">次へ</button>`;}
 
-function renderEditQuestion(qi) {
-  const q = db.courses[courseIndex].units[unitIndex].questions[qi];
-  const answers = getAnswers(q);
-  let answerInputs = "";
-  if (isMultiBlankType(q.type)) {
-    for (let i = 0; i < Number(q.blankCount); i++) answerInputs += `<input class="edit-answer" data-i="${i}" value="${escapeHtml(answers[i] || "")}">`;
-  }
-  app.innerHTML = `<div class="topbar"><button data-act="admin-back">戻る</button></div><div class="card">
-  <input id="eq-question" value="${escapeHtml(q.question)}">
-  <select id="eq-type"><option>fill</option><option>fill_multi</option><option>image_fill</option><option>ox</option><option>choice</option><option>multi</option></select>
-  <input id="eq-blankCount" type="number" min="1" value="${Number(q.blankCount) || 1}">
-  <textarea id="eq-choices">${escapeHtml((q.choices || []).join("\n"))}</textarea>
-  <input id="eq-answer" value="${escapeHtml(q.answer || "")}">
-  <div id="eq-answers">${answerInputs}</div>
-  <button data-act="upload-image" data-qi="${qi}">画像アップロード</button>
-  <button data-act="save-q" data-qi="${qi}" ${saving ? "disabled" : ""}>保存</button></div>`;
-  document.getElementById("eq-type").value = q.type;
-}
+function renderAdmin(){const c=db.courses[courseIndex]||db.courses[0];courseIndex=Math.max(0,db.courses.indexOf(c));const u=c?.units?.[unitIndex]||c?.units?.[0];unitIndex=Math.max(0,c?.units?.indexOf(u));let h=`<div class="topbar"><button class="secondary" data-act="home">TOP</button><button data-act="save-all">保存</button></div>`;
+h+=`<div class="card"><h3>管理画面</h3><label>科目<select id="adminCourse">`;db.courses.forEach((x,i)=>h+=`<option value="${i}" ${i===courseIndex?"selected":""}>${esc(x.title)}</option>`);h+=`</select></label><div><button data-act="add-course">科目追加</button><button data-act="ren-course">科目名変更</button><button data-act="del-course">科目削除</button></div>`;
+h+=`<label>単元<select id="adminUnit">`;(db.courses[courseIndex]?.units||[]).forEach((x,i)=>h+=`<option value="${i}" ${i===unitIndex?"selected":""}>${esc(x.title)} ${x.isVisible===false?"(非表示)":""}</option>`);h+=`</select></label><div><button data-act="add-unit">単元追加</button><button data-act="ren-unit">単元名変更</button><button data-act="toggle-unit">表示/非表示</button><button data-act="del-unit">単元削除</button></div>`;
+h+=`<div><button data-act="add-q">問題追加</button><button data-act="export-json">JSON出力</button><input type="file" id="importJson" accept="application/json"></div></div>`;
+h+=`<div class="card"><h4>問題一覧</h4>`;(curUnit()?.questions||[]).forEach((q,i)=>h+=`<div class="card"><div>${i+1}. [${esc(TLABEL[q.type]||q.type)}] ${esc((q.question||"").slice(0,60))}</div><button data-act="up-q" data-qi="${i}">↑</button><button data-act="down-q" data-qi="${i}">↓</button><button data-act="edit-q" data-qi="${i}">編集</button><button data-act="del-q" data-qi="${i}">削除</button></div>`);h+=`</div>`;app.innerHTML=h;}
 
-async function saveQuestion(qi) {
-  if (saving) return;
-  const q = db.courses[courseIndex].units[unitIndex].questions[qi];
-  q.question = norm(document.getElementById("eq-question").value);
-  q.type = document.getElementById("eq-type").value;
-  q.blankCount = Math.max(1, Number(document.getElementById("eq-blankCount").value) || 1);
-  q.choices = document.getElementById("eq-choices").value.split("\n").map(norm).filter(Boolean);
-  q.answer = norm(document.getElementById("eq-answer").value);
-  if (isMultiBlankType(q.type)) {
-    q.answers = [...document.querySelectorAll(".edit-answer")].map((x) => norm(x.value));
-    if (q.answers.length !== q.blankCount) {
-      alert("blankCount と answers 数が一致しないため保存できません。");
-      return;
-    }
-  }
-  saving = true;
-  try {
-    const body = JSON.stringify({ courseIndex, unitIndex, questionIndex: qi, question: q });
-    if (q.id) await api(`/api/questions/${q.id}`, { method: "PUT", headers: { "content-type": "application/json" }, body });
-    else await api(`/api/questions`, { method: "POST", headers: { "content-type": "application/json" }, body });
-    await loadData(true);
-    renderAdmin();
-  } catch (e) {
-    alert(`保存エラー: ${e.message}`);
-  } finally { saving = false; }
-}
+function typeFields(q){let h=`<label>問題文<input id="eq-question" value="${esc(q.question||"")}"></label><label>解説<textarea id="eq-exp">${esc(q.explanation||"")}</textarea></label><label>画像<input type="file" id="eq-image-file" accept="image/*"></label><div id="img-preview">${q.imageData?`<img class="quiz-image" src="${esc(q.imageData)}">`:""}</div><button class="secondary" data-act="img-clear">画像削除</button>`;
+if(q.type==="ox")h+=`<label>正解<select id="eq-answer"><option value="○" ${q.answer==="○"?"selected":""}>○</option><option value="×" ${q.answer==="×"?"selected":""}>×</option></select></label>`;
+if(q.type==="choice"||q.type==="multi")h+=`<label>選択肢(改行区切り)<textarea id="eq-choices">${esc((q.choices||[]).join("\n"))}</textarea></label>`;
+if(q.type==="choice"||q.type==="fill")h+=`<label>正解<input id="eq-answer" value="${esc(q.answer||"")}"></label>`;
+if(q.type==="multi")h+=`<label>正解(改行区切り)<textarea id="eq-answers-text">${esc((q.answers||[]).join("\n"))}</textarea></label>`;
+if(isMB(q.type)){h+=`<label>blankCount<input id="eq-blankCount" type="number" min="1" max="8" value="${Math.max(1,Number(q.blankCount)||1)}"></label><div id="eq-answers">`;gAns(q).forEach((a,i)=>h+=`<label>アンサー${i+1}<input class="edit-answer" value="${esc(a||"")}"></label>`);h+=`</div>`;}
+return h;}
+function renderQuestionTypeSelector(){app.innerHTML=`<div class="topbar"><button data-act="admin-back">戻る</button></div><div class="card"><h3>問題タイプを選択</h3>${TYPES.map(t=>`<button data-act="pick-type" data-type="${t}">${esc(TLABEL[t])}</button>`).join("")}</div><div class="card" id="live-editor"><p class="sub">タイプ選択で入力UIを表示します</p></div>`;}
+function renderEditQuestion(qi){const q=curUnit().questions[qi];app.innerHTML=`<div class="topbar"><button data-act="admin-back">戻る</button></div><div class="card"><h3>${esc(db.courses[courseIndex].title)} / ${esc(curUnit().title)} / ${esc(TLABEL[q.type])}</h3>${typeFields(q)}<button data-act="save-q" data-qi="${qi}">保存</button></div>`;}
+function renderCreateForType(type){const q=nQ({type,blankCount:1});app.innerHTML=`<div class="topbar"><button data-act="admin-back">戻る</button></div><div class="card"><h3>新規問題: ${esc(TLABEL[type])}</h3>${typeFields(q)}<button data-act="create-q" data-type="${type}">保存</button></div>`;}
 
-async function deleteQuestion(qi) {
-  if (deleting) return;
-  const unit = db.courses[courseIndex].units[unitIndex];
-  const q = unit.questions[qi];
-  deleting = true;
-  try {
-    if (q.id) await api(`/api/questions/${q.id}`, { method: "DELETE" });
-    else unit.questions.splice(qi, 1);
-    await loadData(true);
-    renderAdmin();
-  } catch (e) {
-    alert(`削除エラー: ${e.message}`);
-  } finally { deleting = false; }
-}
 
-document.addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-act]");
-  if (!t) return;
-  const a = t.dataset.act;
-  if (a === "home") renderHome();
-  else if (a === "open-admin") { await loadData(true); renderAdmin(); }
-  else if (a === "open-course") renderUnits(Number(t.dataset.ci));
-  else if (a === "start-quiz") { courseIndex = Number(t.dataset.ci); unitIndex = Number(t.dataset.ui); questionIndex = 0; renderQuestion(); }
-  else if (a === "back-units") renderUnits(courseIndex);
-  else if (a === "next-q") { questionIndex += 1; const unit = db.courses[courseIndex].units[unitIndex]; if (questionIndex >= unit.questions.length) renderComplete(); else renderQuestion(); }
-  else if (a === "ans-single") { const q = db.courses[courseIndex].units[unitIndex].questions[questionIndex]; judgeAndShow(norm(t.dataset.v) === norm(q.answer), q.answer); }
-  else if (a === "ans-fill") { const q = db.courses[courseIndex].units[unitIndex].questions[questionIndex]; const v = norm(document.getElementById("answerInput").value); judgeAndShow(v === norm(q.answer), q.answer); }
-  else if (a === "ans-multi") { const q = db.courses[courseIndex].units[unitIndex].questions[questionIndex]; const got = [...document.querySelectorAll(".multi-answer:checked")].map((x) => norm(x.value)).sort().join("|"); const exp = (q.answers || []).map(norm).sort().join("|"); judgeAndShow(got === exp, (q.answers || []).join(",")); }
-  else if (a === "ans-fill-multi") { const q = db.courses[courseIndex].units[unitIndex].questions[questionIndex]; const got = [...document.querySelectorAll(".blank-input")].map((x) => norm(x.value)); const exp = getAnswers(q); const ok = got.length === exp.length && got.every((x, i) => x === norm(exp[i])); judgeAndShow(ok, exp.join(", ")); }
-  else if (a === "add-q") { db.courses[courseIndex].units[unitIndex].questions.push(normalizeQuestion({ type: "fill", question: "", answer: "" })); renderAdmin(); }
-  else if (a === "edit-q") renderEditQuestion(Number(t.dataset.qi));
-  else if (a === "admin-back") renderAdmin();
-  else if (a === "save-q") await saveQuestion(Number(t.dataset.qi));
-  else if (a === "del-q") await deleteQuestion(Number(t.dataset.qi));
-  else if (a === "save-all") { alert("各問題の保存で反映されます。保存対象の問題を編集画面から保存してください。"); }
+function syncPreviewToQuestion(q){const img=document.querySelector('#img-preview img');q.imageData=img?String(img.getAttribute('src')||''):"";}
+function applyEditorToQuestion(q){q.question=norm(document.getElementById("eq-question")?.value);q.explanation=norm(document.getElementById("eq-exp")?.value);q.imageData=q.imageData||"";syncPreviewToQuestion(q);if(q.type==="ox"||q.type==="choice"||q.type==="fill")q.answer=norm(document.getElementById("eq-answer")?.value);if(q.type==="choice"||q.type==="multi")q.choices=(document.getElementById("eq-choices")?.value||"").split("\n").map(norm).filter(Boolean);if(q.type==="multi")q.answers=(document.getElementById("eq-answers-text")?.value||"").split("\n").map(norm).filter(Boolean);if(isMB(q.type)){q.blankCount=Math.max(1,Number(document.getElementById("eq-blankCount")?.value)||1);q.answers=[...document.querySelectorAll(".edit-answer")].map(x=>norm(x.value)).slice(0,q.blankCount);while(q.answers.length<q.blankCount)q.answers.push("");if(q.answers.length!==q.blankCount)throw new Error("blankCount mismatch");}}
+
+async function saveQuestion(qi){if(saving)return;const q=curUnit().questions[qi];try{applyEditorToQuestion(q);}catch{alert("blankCount と answers 数が一致しないため保存できません。");return;}saving=true;try{const body=JSON.stringify({courseIndex,unitIndex,questionIndex:qi,question:q});if(q.id)await api(`/api/questions/${q.id}`,{method:"PUT",headers:{"content-type":"application/json"},body});else await api(`/api/questions`,{method:"POST",headers:{"content-type":"application/json"},body});await loadData(true);renderAdmin();}catch(e){alert(`保存エラー: ${e.message}`);}finally{saving=false;}}
+async function createQuestion(type){const q=nQ({type});try{applyEditorToQuestion(q);}catch{alert("blankCount と answers 数が一致しないため保存できません。");return;}curUnit().questions.push(q);await saveQuestion(curUnit().questions.length-1);}
+async function deleteQuestion(qi){if(deleting)return;const q=curUnit().questions[qi];if(!confirm("削除しますか？"))return;deleting=true;try{if(q.id)await api(`/api/questions/${q.id}`,{method:"DELETE"});else curUnit().questions.splice(qi,1);await loadData(true);renderAdmin();}catch(e){alert(`削除エラー: ${e.message}`);}finally{deleting=false;}}
+
+document.addEventListener("click",async(e)=>{const t=e.target.closest("[data-act]");if(!t)return;const a=t.dataset.act;
+if(a==="home"){if(db.courses.length)renderUnits(courseIndex||0);} else if(a==="open-admin"){await loadData(true);renderAdmin();} else if(a==="open-course")renderUnits(+t.dataset.ci); else if(a==="start-quiz"){courseIndex=+t.dataset.ci;unitIndex=+t.dataset.ui;questionIndex=0;renderQuestion();} else if(a==="back-units")renderUnits(courseIndex); else if(a==="next-q"){questionIndex++;questionIndex>=curUnit().questions.length?renderUnits(courseIndex):renderQuestion();}
+else if(a==="ans-single"){const q=curQ();judge(norm(t.dataset.v)===norm(q.answer),q.answer);} else if(a==="ans-fill"){const q=curQ();judge(norm(document.getElementById("answerInput").value)===norm(q.answer),q.answer);} else if(a==="ans-multi"){const q=curQ(),got=[...document.querySelectorAll('.multi-answer:checked')].map(x=>norm(x.value)).sort().join('|'),exp=(q.answers||[]).map(norm).sort().join('|');judge(got===exp,(q.answers||[]).join(','));} else if(a==="ans-fill-multi"){const q=curQ(),got=[...document.querySelectorAll('.blank-input')].map(x=>norm(x.value)),exp=gAns(q);judge(got.length===Number(q.blankCount)&&got.every((x,i)=>x===norm(exp[i])),exp.join(', '));}
+else if(a==="admin-back")renderAdmin(); else if(a==="add-q")renderQuestionTypeSelector(); else if(a==="pick-type")renderCreateForType(t.dataset.type); else if(a==="create-q")await createQuestion(t.dataset.type); else if(a==="edit-q")renderEditQuestion(+t.dataset.qi); else if(a==="save-q")await saveQuestion(+t.dataset.qi); else if(a==="del-q")await deleteQuestion(+t.dataset.qi);
+else if(a==="up-q"){const i=+t.dataset.qi,arr=curUnit().questions;if(i>0)[arr[i-1],arr[i]]=[arr[i],arr[i-1]];renderAdmin();} else if(a==="down-q"){const i=+t.dataset.qi,arr=curUnit().questions;if(i<arr.length-1)[arr[i+1],arr[i]]=[arr[i],arr[i+1]];renderAdmin();}
+else if(a==="add-course"){const n=prompt("科目名");if(n)db.courses.push({title:n,units:[]});renderAdmin();} else if(a==="ren-course"){const n=prompt("科目名",db.courses[courseIndex]?.title||"");if(n!=null)db.courses[courseIndex].title=n;renderAdmin();} else if(a==="del-course"){if(confirm("科目を削除しますか？")){db.courses.splice(courseIndex,1);courseIndex=0;unitIndex=0;renderAdmin();}}
+else if(a==="add-unit"){const n=prompt("単元名");if(n)db.courses[courseIndex].units.push({title:n,isVisible:true,questions:[]});renderAdmin();} else if(a==="ren-unit"){const u=curUnit();if(!u)return;const n=prompt("単元名",u.title);if(n!=null)u.title=n;renderAdmin();} else if(a==="toggle-unit"){const u=curUnit();if(u){u.isVisible=u.isVisible===false?true:false;try{await api(`/api/units/${u.id}`,{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({isVisible:u.isVisible})});}catch(_){ }renderAdmin();}} else if(a==="del-unit"){if(confirm("単元削除しますか？")){db.courses[courseIndex].units.splice(unitIndex,1);unitIndex=0;renderAdmin();}}
+else if(a==="save-all")alert("各問題の保存で反映されます。保存対象の問題を編集画面から保存してください。"); else if(a==="export-json"){const blob=new Blob([JSON.stringify(db,null,2)],{type:"application/json"});const ael=document.createElement('a');ael.href=URL.createObjectURL(blob);ael.download='questions.json';ael.click();URL.revokeObjectURL(ael.href);} else if(a==="img-clear"){const p=document.getElementById('img-preview');if(p)p.innerHTML='';}
 });
 
-document.addEventListener("change", async (e) => {
-  const id = e.target.id;
-  if (id === "adminCourse") { courseIndex = Number(e.target.value); unitIndex = 0; renderAdmin(); }
-  else if (id === "adminUnit") { unitIndex = Number(e.target.value); renderAdmin(); }
-  else if (id === "eq-blankCount") {
-    const cnt = Math.max(1, Number(e.target.value) || 1);
-    const box = document.getElementById("eq-answers");
-    const prev = [...box.querySelectorAll(".edit-answer")].map((x) => x.value);
-    let html = "";
-    for (let i = 0; i < cnt; i++) html += `<input class="edit-answer" data-i="${i}" value="${escapeHtml(prev[i] || "")}">`;
-    box.innerHTML = html;
-  } else if (id === "importJson") {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const text = await file.text();
-    db = ensureDbShape(JSON.parse(text));
-    renderAdmin();
-  }
+document.addEventListener("change",async(e)=>{const id=e.target.id;
+if(id==="adminCourse"){courseIndex=+e.target.value;unitIndex=0;renderAdmin();}
+else if(id==="adminUnit"){unitIndex=+e.target.value;renderAdmin();}
+else if(id==="importJson"){const f=e.target.files?.[0];if(!f)return;db=eDB(JSON.parse(await f.text()));renderAdmin();}
+else if(id==="eq-blankCount"){const cnt=Math.max(1,Number(e.target.value)||1),box=document.getElementById('eq-answers');if(!box)return;const prev=[...box.querySelectorAll('.edit-answer')].map(x=>x.value);let h='';for(let i=0;i<cnt;i++)h+=`<label>アンサー${i+1}<input class="edit-answer" value="${esc(prev[i]||'')}"></label>`;box.innerHTML=h;}
+else if(id==="eq-image-file"){const f=e.target.files?.[0];if(!f)return;const r=new FileReader();r.onload=()=>{const p=document.getElementById('img-preview');if(p)p.innerHTML=`<img class="quiz-image" src="${esc(r.result)}">`;};r.readAsDataURL(f);}
 });
 
-window.renderAdmin = renderAdmin;
-window.renderQuestion = renderQuestion;
-window.saveQuestion = saveQuestion;
-window.deleteQuestion = deleteQuestion;
-
-(async function init() {
-  try { await loadData(false); } catch (e) { console.error(e); }
-  renderHome();
-})();
+(async()=>{try{await loadData(false);}catch(e){console.error(e);}if(db.courses.length){courseIndex=0;renderUnits(0);}else{app.innerHTML='<div class="card"><h2>データがありません</h2></div>';}})();
