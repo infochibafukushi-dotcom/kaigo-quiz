@@ -712,7 +712,7 @@ imageData: "",
     blankCount: Math.max(1, Number(question.blankCount) || 1)
   };
 
-  const courseId = question.courseId ?? context.courseId;
+ const courseId = context.courseId ?? question.courseId;
 const unitId = context.unitId ?? question.unitId;
 
   if (courseId !== undefined && courseId !== null && courseId !== "") payload.courseId = courseId;
