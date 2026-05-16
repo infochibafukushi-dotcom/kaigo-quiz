@@ -248,7 +248,698 @@ function renderQuestion(){
         if(q.type === "image_fill") checkImageFill();
       }
     });
+
+    const text = document.getElementById("editAnswers");
+    if (text) text.value = editAnswersCache.join("\n");
   }
+
+  function renderAnswerInputsByBlankCount() {
+    const typeEl = document.getElementById("editType");
+    const list = document.getElementById("editAnswersList");
+    const text = document.getElementById("editAnswers");
+    const blankCountEl = document.getElementById("editBlankCount");
+
+    if (!typeEl || !list || !text || !blankCountEl) return;
+    if (!isMultiBlankType(typeEl.value)) return;
+
+    const currentInputs = [...list.querySelectorAll("input[data-answer-index]")];
+    if (currentInputs.length) {
+      currentInputs.forEach((input) => {
+        const index = Number(input.dataset.answerIndex);
+        if (Number.isFinite(index)) editAnswersCache[index] = normalize(input.value);
+      });
+    } else if (text.value) {
+      editAnswersCache = text.value.split("\n").map(normalize);
+    }
+
+    const requested = parseInt(blankCountEl.value, 10);
+    const blankCount = Number.isFinite(requested) && requested > 0 ? requested : 1;
+
+    blankCountEl.value = String(blankCount);
+    editAnswersCache = editAnswersCache.slice(0, blankCount);
+    while (editAnswersCache.length < blankCount) editAnswersCache.push("");
+
+    let html = "";
+    for (let i = 0; i < blankCount; i += 1) {
+      html += `
+        <div class="answer-edit-row">
+          <label>アンサー${esc(toCircledNumber(i + 1))}</label>
+          <input type="text" data-answer-index="${i}" value="${esc(editAnswersCache[i] || "")}" oninput="syncAnswerCacheFromInput(event)">
+        </div>
+      `;
+    }
+
+    list.innerHTML = html;
+    text.value = editAnswersCache.join("\n");
+  }
+
+  function syncAnswerCacheFromInput(event) {
+    const input = event?.target;
+    if (!input) return;
+
+    const index = Number(input.dataset.answerIndex);
+    if (!Number.isFinite(index)) return;
+
+    editAnswersCache[index] = normalize(input.value);
+
+    const text = document.getElementById("editAnswers");
+    if (text) text.value = editAnswersCache.join("\n");
+  }
+
+  function toggleAnswerInputMode() {
+    const type = document.getElementById("editType")?.value;
+    const list = document.getElementById("editAnswersList");
+    const text = document.getElementById("editAnswers");
+    const label = document.getElementById("editAnswersLabel");
+    const textActions = document.getElementById("editAnswersTextActions");
+    const multiActions = document.getElementById("editAnswersMultiActions");
+
+    if (!list || !text || !label || !textActions || !multiActions) return;
+
+    if (isMultiBlankType(type)) {
+      if (text.value) editAnswersCache = text.value.split("\n").map(normalize);
+      label.textContent = "正解（空欄ごとに入力）";
+      text.classList.add("hidden");
+      list.classList.remove("hidden");
+      textActions.classList.add("hidden");
+      multiActions.classList.remove("hidden");
+      renderAnswerInputsByBlankCount();
+      return;
+    }
+
+    syncAnswerCacheFromRenderedInputs();
+
+    label.textContent = "正解（1行に1つ。複数ある場合は順番に入力。○×は ○ または ×）";
+    list.classList.add("hidden");
+    text.classList.remove("hidden");
+    textActions.classList.remove("hidden");
+    multiActions.classList.add("hidden");
+
+    if (editAnswersCache.length) {
+      text.value = editAnswersCache.filter((v) => v !== "").join("\n");
+    }
+  }
+
+  function appendFillMultiBlank() {
+    const question = document.getElementById("editQuestion");
+    const blankCountEl = document.getElementById("editBlankCount");
+
+    if (question) {
+      question.value += "（ ）";
+      question.focus();
+    }
+
+    const nextBlankCount = (Number(blankCountEl?.value) || 0) + 1;
+    if (blankCountEl) blankCountEl.value = String(nextBlankCount);
+
+    renderAnswerInputsByBlankCount();
+  }
+
+  function buildQuestionFromEditor(index) {
+    const type = normalizeQuestionType(document.getElementById("editType")?.value);
+    const question = normalize(document.getElementById("editQuestion")?.value);
+    const choices = (document.getElementById("editChoices")?.value || "")
+      .split("\n")
+      .map(normalize)
+      .filter(Boolean);
+
+    let answers = (document.getElementById("editAnswers")?.value || "")
+      .split("\n")
+      .map(normalize)
+      .filter((v) => v !== "");
+
+    const blankCount = Math.max(Number(document.getElementById("editBlankCount")?.value) || 1, 1);
+
+    if (isMultiBlankType(type)) {
+      renderAnswerInputsByBlankCount();
+      syncAnswerCacheFromRenderedInputs();
+      answers = [...document.querySelectorAll("#editAnswersList input[data-answer-index]")]
+        .map((input) => normalize(input.value));
+    }
+
+    if (type !== "image_fill" && !question) {
+      throw new Error("問題文を入力してください");
+    }
+
+    if (type === "choice" || type === "multi") {
+      if (choices.length === 0) throw new Error("選択肢を入力してください");
+    }
+
+    if (type === "fill_multi" || type === "image_fill") {
+      if (answers.length !== blankCount) throw new Error("空欄数と正解数が一致していません");
+      if (answers.some((a) => !a)) throw new Error("正解入力欄をすべて入力してください");
+    } else if (answers.length === 0) {
+      throw new Error("正解を入力してください");
+    }
+
+    if (type === "ox" && !["○", "×"].includes(answers[0])) {
+      throw new Error("○×問題の正解は ○ または × で入力してください");
+    }
+
+    const unit = db.courses[courseIndex].units[unitIndex];
+    const existing = index === null ? null : unit.questions[index];
+
+    const q = {
+      type,
+      question,
+    };
+
+    if (existing?.id !== undefined && existing?.id !== null && String(existing.id).trim() !== "") {
+      q.id = existing.id;
+    }
+
+    if (editingImageData) {
+      q.imageUrl = editingImageData;
+    }
+
+    if (type === "choice") {
+      q.choices = choices;
+      q.answer = answers[0];
+    } else if (type === "ox") {
+      q.answer = answers[0];
+    } else if (type === "multi") {
+      q.choices = choices;
+      q.answers = answers;
+    } else if (type === "fill_multi" || type === "image_fill") {
+      q.blankCount = blankCount;
+      q.answers = answers;
+    } else {
+      q.answers = answers;
+    }
+
+    return q;
+  }
+
+  async function saveQuestion(index) {
+    if (isSavingQuestion) return;
+
+    const saveButton = document.getElementById("saveQuestionButton");
+    isSavingQuestion = true;
+    if (saveButton) saveButton.disabled = true;
+
+    try {
+      const unit = db.courses[courseIndex].units[unitIndex];
+      const q = buildQuestionFromEditor(index);
+      const sortOrder = index === null ? unit.questions.length : index;
+      const payload = {
+        ...q,
+        course: db.courses[courseIndex].title,
+        unit: unit.title,
+        sortOrder,
+      };
+
+      if (q.id) {
+        await apiJson(
+          `${API_BASE}/api/questions/${encodeURIComponent(q.id)}`,
+          {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(payload),
+          },
+          "問題の更新に失敗しました"
+        );
+      } else {
+        const saved = await apiJson(
+          `${API_BASE}/api/questions`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(payload),
+          },
+          "問題の作成に失敗しました"
+        );
+
+        if (saved?.id !== undefined && saved?.id !== null) {
+          q.id = saved.id;
+        }
+      }
+
+      if (index === null) {
+        unit.questions.push(q);
+      } else {
+        unit.questions[index] = q;
+      }
+
+      await loadData({ admin: true, skipRender: true });
+      renderAdmin();
+    } catch (error) {
+      console.error(error);
+      alert(`保存に失敗しました: ${error?.message || error}`);
+    } finally {
+      isSavingQuestion = false;
+      if (saveButton) saveButton.disabled = false;
+    }
+  }
+
+  async function deleteQuestion(i) {
+    if (!confirm("この問題を削除しますか？")) return;
+
+    const questions = db.courses[courseIndex].units[unitIndex].questions;
+    const target = questions[i];
+
+    try {
+      if (target?.id !== undefined && target?.id !== null && String(target.id).trim() !== "") {
+        await apiJson(
+          `${API_BASE}/api/questions/${encodeURIComponent(String(target.id))}`,
+          { method: "DELETE" },
+          "問題の削除に失敗しました"
+        );
+      }
+
+      questions.splice(i, 1);
+      await loadData({ admin: true, skipRender: true });
+      renderAdmin();
+    } catch (error) {
+      console.error(error);
+      alert(`削除に失敗しました: ${error?.message || error}`);
+    }
+  }
+
+  async function moveQuestion(i, dir) {
+    const arr = db.courses[courseIndex].units[unitIndex].questions;
+    const ni = i + dir;
+    if (ni < 0 || ni >= arr.length) return;
+
+    [arr[i], arr[ni]] = [arr[ni], arr[i]];
+
+    try {
+      await saveLocalData(false);
+      renderAdmin();
+    } catch (error) {
+      console.error(error);
+      alert(`保存に失敗しました: ${error?.message || error}`);
+    }
+  }
+
+  async function syncAllQuestionsToApi() {
+    if (isSyncingAll) return;
+    isSyncingAll = true;
+
+    try {
+      const current = await apiJson(`${API_BASE}/api/questions?admin=1`, {}, "問題一覧の取得に失敗しました");
+      const currentIds = new Set();
+
+      (current?.courses || []).forEach((course) => {
+        (course.units || []).forEach((unit) => {
+          (unit.questions || []).forEach((question) => {
+            if (question?.id !== undefined && question?.id !== null) currentIds.add(String(question.id));
+          });
+        });
+      });
+
+      const incomingIds = new Set();
+
+      for (const course of db.courses || []) {
+        for (const unit of course.units || []) {
+          for (let i = 0; i < (unit.questions || []).length; i += 1) {
+            const q = normalizeQuestion(unit.questions[i]);
+            unit.questions[i] = q;
+
+            const payload = {
+              ...q,
+              course: course.title,
+              unit: unit.title,
+              sortOrder: i,
+            };
+
+            if (q.id !== undefined && q.id !== null && String(q.id).trim() !== "") {
+              incomingIds.add(String(q.id));
+              await apiJson(
+                `${API_BASE}/api/questions/${encodeURIComponent(String(q.id))}`,
+                {
+                  method: "PUT",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify(payload),
+                },
+                "問題の更新に失敗しました"
+              );
+            } else {
+              const saved = await apiJson(
+                `${API_BASE}/api/questions`,
+                {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify(payload),
+                },
+                "問題の作成に失敗しました"
+              );
+
+              if (saved?.id !== undefined && saved?.id !== null) {
+                q.id = saved.id;
+                incomingIds.add(String(q.id));
+              }
+            }
+          }
+        }
+      }
+
+      for (const id of currentIds) {
+        if (!incomingIds.has(id)) {
+          await apiJson(
+            `${API_BASE}/api/questions/${encodeURIComponent(id)}`,
+            { method: "DELETE" },
+            "問題の削除に失敗しました"
+          );
+        }
+      }
+
+      await loadData({ admin: true, skipRender: true });
+    } finally {
+      isSyncingAll = false;
+    }
+  }
+
+  function downloadJson() {
+    const blob = new Blob([JSON.stringify(db, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "questions.json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function importJson() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "application/json";
+
+    input.onchange = (event) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          db = ensureDbShape(JSON.parse(reader.result));
+          courseIndex = 0;
+          unitIndex = 0;
+          await saveLocalData(false);
+          renderAdmin();
+        } catch (error) {
+          console.error(error);
+          alert(`JSON読込に失敗しました: ${error?.message || error}`);
+        }
+      };
+
+      reader.readAsText(file);
+    };
+
+    input.click();
+  }
+
+function getCorrectAnswers(q){
+  if(Array.isArray(q.correctAnswers)) return q.correctAnswers;
+  if(Array.isArray(q.answers)) return q.answers;
+  return q.answer ? [q.answer] : [];
+}
+
+function showResult(ok, ans){
+  if(lastResultShown) return;
+  lastResultShown = true;
+  beep(ok);
+
+  const box = document.createElement("div");
+  box.className = `result ${ok ? "ok" : "ng"}`;
+  box.innerHTML = `
+    ${ok ? "○ 正解" : "× 不正解"}
+    <div class="answer">正解：${esc(Array.isArray(ans) ? ans.join("、") : ans)}</div>
+    <button onclick="nextQuestion()">次へ</button>
+  `;
+  app.appendChild(box);
+  box.scrollIntoView({behavior:"smooth", block:"center"});
+}
+
+function checkFill(){
+  const q = currentQuestion();
+  const val = normalizeForCompare(document.getElementById("answerInput").value);
+  const answers = getCorrectAnswers(q);
+  const ok = val !== "" && answers.some(a => normalizeForCompare(a) === val);
+  showResult(ok, answers);
+}
+
+function checkFillMulti(){
+  const q = currentQuestion();
+  const answers = getCorrectAnswers(q);
+  const blankCount = getQuestionBlankCount(q);
+  const results = [];
+
+  for(let i = 0; i < blankCount; i++){
+    const input = document.getElementById(`answerInput${i}`);
+    const val = normalizeForCompare(input ? input.value : "");
+    const ans = normalizeForCompare(answers[i] || "");
+    const correct = val !== "" && ans !== "" && val === ans;
+    results.push({index:i + 1, correct});
+  }
+  showMultiInputJudges(results);
+  showMultiResult(results, answers);
+}
+
+function checkImageFill(){
+  const q = currentQuestion();
+  const answers = getCorrectAnswers(q);
+  const blankCount = getQuestionBlankCount(q);
+  const results = [];
+  for(let i = 0; i < blankCount; i++){
+    const input = document.getElementById(`answerInput${i}`);
+    const val = normalizeForCompare(input ? input.value : "");
+    const ans = normalizeForCompare(answers[i] || "");
+    const correct = val !== "" && ans !== "" && val === ans;
+    results.push({index:i + 1, correct});
+  }
+  showMultiInputJudges(results);
+  showMultiResult(results, answers);
+}
+
+function checkSingle(v){
+  const q = currentQuestion();
+  showResult(normalizeForCompare(q.answer) === normalizeForCompare(v), q.answer);
+}
+
+function checkMulti(){
+  const q = currentQuestion();
+  const checked = [...document.querySelectorAll("input[type=checkbox]:checked")]
+    .map(x=>normalizeForCompare(x.value))
+    .sort();
+  const ans = q.answers.map(normalizeForCompare).sort();
+  showResult(JSON.stringify(checked) === JSON.stringify(ans), q.answers);
+}
+
+function showMultiInputJudges(results){
+  results.forEach((r, i) => {
+    const input = document.getElementById(`answerInput${i}`);
+    const row = input?.closest(".fill-multi-row");
+    if(!row) return;
+    let badge = row.querySelector(".answer-judge");
+    if(!badge){
+      badge = document.createElement("span");
+      badge.className = "answer-judge";
+      row.appendChild(badge);
+    }
+    badge.textContent = r.correct ? "○" : "×";
+    badge.classList.toggle("ok", r.correct);
+    badge.classList.toggle("ng", !r.correct);
+  });
+}
+
+function showMultiResult(results, answers){
+  if(lastResultShown) return;
+  lastResultShown = true;
+  const wrongCount = results.filter(r => !r.correct).length;
+  const allCorrect = wrongCount === 0;
+  beep(allCorrect);
+
+  const box = document.createElement("div");
+  box.className = `result ${allCorrect ? "ok" : "ng"}`;
+  box.innerHTML = `
+    ${allCorrect ? "正解！" : "不正解です"}
+    <div class="answer">${allCorrect ? "全問正解です。素晴らしいです！" : `${results.length}問中${wrongCount}問不正解です`}</div>
+    <div class="answer">正解：${esc(Array.isArray(answers) ? answers.join("、") : answers)}</div>
+    <button onclick="nextQuestion()">次へ</button>
+  `;
+  app.appendChild(box);
+  box.scrollIntoView({behavior:"smooth", block:"center"});
+}
+
+function nextQuestion(){
+  const unit = db.courses[courseIndex].units[unitIndex];
+  questionIndex++;
+  lastResultShown = false;
+
+  if(questionIndex >= unit.questions.length){
+    app.innerHTML = `
+      <div class="card">
+        <h1>終了</h1>
+        <p>${esc(unit.title)} が終わりました。</p>
+        <button onclick="startQuiz(${courseIndex},${unitIndex})">もう一度</button>
+        <button class="secondary" onclick="renderUnits(${courseIndex})">単元へ</button>
+      </div>
+    `;
+    return;
+  }
+
+  renderQuestion();
+}
+
+async function renderAdmin(){
+  await loadData({ admin: true, skipRender: true });
+  db = ensureDbShape(db);
+  if(db.courses.length === 0){
+    db.courses.push({title:"新しい大分類", units:[{title:"新しい単元", questions:[]}]});
+    courseIndex = 0;
+    unitIndex = 0;
+  }
+  const c = db.courses[courseIndex] || db.courses[0];
+  const u = c.units[unitIndex] || c.units[0];
+
+  let html = `
+    <div class="topbar">
+      <div>
+        <h1 class="page-title">管理画面</h1>
+        <div class="sub">問題と答えの編集ができます。編集後は保存してください。</div>
+      </div>
+      <button class="secondary" onclick="renderUnits(${courseIndex})">戻る</button>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <button onclick="downloadJson()">JSON出力</button>
+        <button class="secondary" onclick="importJson()">JSON読込</button>
+        <button class="ok" onclick="addCoursePrompt()">大分類追加</button>
+        <button class="ok" onclick="addUnitPrompt()">単元追加</button>
+        <button class="secondary" onclick="renameCourse()">大分類名変更</button>
+        <button class="ok" onclick="saveLocalData()">保存</button>
+        <button class="danger" onclick="resetToInitialData()">初期データに戻す</button>
+      </div>
+      <div class="notice">保存ボタンでサーバーへ永続保存されます。別端末にも反映されます。</div>
+    </div>
+
+    <div class="grid-admin">
+      <div class="card">
+        <h3>単元</h3>
+  `;
+
+  c.units.forEach((unit, i)=>{
+    const visibilityLabel = unit.isVisible === false ? "非表示" : "表示中";
+    html += `
+      <div class="list-item ${i === unitIndex ? "active" : ""}">
+        <strong>${esc(unit.title)}（${visibilityLabel}）</strong><br>
+        <span class="sub">${unit.questions.length}問</span><br>
+        <button class="small" onclick="selectUnit(${i})">選択</button>
+        <button class="small secondary" onclick="toggleUnitVisibility(${i})">${unit.isVisible === false ? "表示にする" : "非表示にする"}</button>
+        <button class="small secondary" onclick="renameUnit(${i})">名称変更</button>
+        <button class="small danger" onclick="deleteUnit(${i})">削除</button>
+      </div>
+    `;
+  });
+
+  html += `
+      </div>
+      <div class="card">
+        <div class="topbar">
+          <div>
+            <h3>${esc(u.title)}</h3>
+            <div class="sub">${u.questions.length}問</div>
+          </div>
+          <button onclick="openAddQuestion()">＋ 問題追加</button>
+        </div>
+  `;
+
+  u.questions.forEach((q, i)=>{
+    html += `
+      <div class="q-item">
+        <div class="q-head">
+          <div>
+            <span class="badge ${esc(q.type)}">${esc(labelType(q.type))}</span>
+            <strong>${i + 1}. ${esc(q.question)}</strong>
+            <div class="sub">正解：${esc(answerText(q))}</div>
+          </div>
+          <div class="row">
+            <button class="small secondary" onclick="moveQuestion(${i},-1)">上</button>
+            <button class="small secondary" onclick="moveQuestion(${i},1)">下</button>
+            <button class="small" onclick="editQuestion(${i})">編集</button>
+            <button class="small danger" onclick="deleteQuestion(${i})">削除</button>
+          </div>
+        </div>
+      </div>
+    `;
+  });
+
+  html += `</div></div>`;
+  app.innerHTML = html;
+}
+
+async function toggleUnitVisibility(index){
+  const c = db.courses[courseIndex];
+  const u = c?.units?.[index];
+  if(!u?.id) return alert("単元IDが見つかりません");
+  const nextVisible = u.isVisible === false;
+  await apiJson(`${API_BASE}/api/units/${encodeURIComponent(u.id)}/visibility`, {
+    method:"PATCH",
+    headers:{"content-type":"application/json"},
+    body:JSON.stringify({ is_visible: nextVisible })
+  }, "単元表示状態の更新に失敗しました");
+  await renderAdmin();
+}
+
+function answerText(q){
+  if(q.type === "fill" || q.type === "fill_multi" || q.type === "multi") return (q.answers || []).join("、");
+  if(q.type === "image_fill") return (q.answers || []).join("、");
+  return q.answer || "";
+}
+
+function selectUnit(i){
+  unitIndex = i;
+  renderAdmin();
+}
+
+function addCoursePrompt(){
+  const title = prompt("大分類名");
+  if(!normalize(title)) return;
+  db.courses.push({title:normalize(title), units:[]});
+  saveLocalData(false);
+  courseIndex = db.courses.length - 1;
+  unitIndex = 0;
+  renderAdmin();
+}
+
+function addUnitPrompt(){
+  const title = prompt("単元名");
+  if(!normalize(title)) return;
+  db.courses[courseIndex].units.push({title:normalize(title), questions:[]});
+  saveLocalData(false);
+  unitIndex = db.courses[courseIndex].units.length - 1;
+  renderAdmin();
+}
+
+
+function renameCourse(){
+  const c = db.courses[courseIndex];
+  const title = prompt("大分類名", c.title);
+  if(!normalize(title)) return;
+  c.title = normalize(title);
+  saveLocalData(false);
+  renderAdmin();
+}
+
+function renameUnit(i){
+  const u = db.courses[courseIndex].units[i];
+  const title = prompt("単元名", u.title);
+  if(!normalize(title)) return;
+  u.title = normalize(title);
+  saveLocalData(false);
+  renderAdmin();
+}
+
+function deleteUnit(i){
+  if(!confirm("この単元を削除しますか？")) return;
+  db.courses[courseIndex].units.splice(i,1);
+  saveLocalData(false);
+  unitIndex = 0;
+  renderAdmin();
+}
+
+function openAddQuestion(){
+  editQuestion(null);
 }
 
 function getCorrectAnswers(q){
