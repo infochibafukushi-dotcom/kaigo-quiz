@@ -26,6 +26,15 @@ async function loadData(){
       </div>
     `;
   }
+
+  renderUnits(0);
+}
+
+function ensureDbShape(data){
+  const safe = data && typeof data === "object" ? data : {};
+  if(!Array.isArray(safe.courses)) safe.courses = [];
+  safe.appTitle = normalize(safe.appTitle || "カイゴクイズ");
+  return safe;
 }
 
 function ensureDbShape(data){
