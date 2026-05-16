@@ -9,9 +9,21 @@ let editingImageData = "";
 const app = document.getElementById("app");
 const API_BASE = "https://kaigo-quiz-save.info-chibafukushi.workers.dev";
 
-async function loadData(){
+async function loadData() {
   const res = await fetch(`${API_BASE}/api/questions?ts=` + Date.now());
   db = await res.json();
+
+  if (!db.courses || db.courses.length === 0) {
+    db.courses = [
+      {
+        title: "介護福祉士実務者研修",
+        units: []
+      }
+    ];
+    renderAdmin();
+    return;
+  }
+
   renderUnits(0);
 }
 
