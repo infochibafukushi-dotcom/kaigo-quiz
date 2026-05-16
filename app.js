@@ -541,7 +541,7 @@ function editQuestion(index){
 
     <div class="card">
       <label>形式</label>
-      <select id="editType" onchange="renderAnswerInputsByBlankCount()">
+      <select id="editType" onchange="toggleAnswerInputMode()">
         <option value="fill" ${q.type==="fill"?"selected":""}>記述</option>
         <option value="fill_multi" ${q.type==="fill_multi"?"selected":""}>記述（複数空欄）</option>
         <option value="image_fill" ${q.type==="image_fill"?"selected":""}>画像穴埋め</option>
@@ -576,12 +576,14 @@ function editQuestion(index){
         <button type="button" class="danger small" onclick="removeChoice()">選択肢削除</button>
       </div>
 
-      <label>正解（1行に1つ。複数空欄は空欄順に入力。○×は ○ または ×）</label>
-      <textarea id="editAnswers" class="${q.type==="fill_multi" || q.type==="image_fill" ? "hidden" : ""}">${esc(q.type==="choice" || q.type==="ox" ? (q.answer || "") : (q.answers || []).join("\\n"))}</textarea>
-      <div id="editAnswersList"></div>
-      <div class="row">
+      <label id="editAnswersLabel">正解（1行に1つ。複数空欄は空欄順に入力。○×は ○ または ×）</label>
+      <textarea id="editAnswers">${esc(q.type==="choice" || q.type==="ox" ? (q.answer || "") : (q.answers || []).join("\\n"))}</textarea>
+      <div id="editAnswersList" class="hidden"></div>
+      <div id="editAnswersTextActions" class="row">
         <button type="button" class="secondary small" onclick="appendAnswer()">正解追加</button>
         <button type="button" class="danger small" onclick="removeAnswer()">正解削除</button>
+      </div>
+      <div id="editAnswersMultiActions" class="row hidden">
         <button type="button" class="secondary small" onclick="appendFillMultiBlank()">fill_multi 空欄追加</button>
       </div>
 
@@ -590,7 +592,7 @@ function editQuestion(index){
   `;
   app.innerHTML = html;
   initImageUploader();
-  renderAnswerInputsByBlankCount();
+  toggleAnswerInputMode();
 }
 
 function triggerImageSelect(){
@@ -670,10 +672,20 @@ async function parseJsonSafe(response){
 
 async function apiJson(url, options = {}, fallbackMessage = "APIエラー"){
   const response = await fetch(url, options);
-  const data = await parseJsonSafe(response);
+  let data = await parseJsonSafe(response);
   if(!response.ok){
-    const detail = data?.error ? `: ${data.error}` : "";
-    throw new Error(`${fallbackMessage} (${response.status})${detail}`);
+    if(!data){
+      try{
+        const bodyText = await response.text();
+        data = bodyText ? { body: bodyText } : null;
+      }catch(e){}
+    }
+    const detailParts = [];
+    if(data?.error) detailParts.push(`error=${data.error}`);
+    if(data?.message) detailParts.push(`message=${data.message}`);
+    if(data?.body) detailParts.push(`body=${data.body}`);
+    const detail = detailParts.length ? `: ${detailParts.join(" / ")}` : "";
+    throw new Error(`${fallbackMessage} (status=${response.status})${detail}`);
   }
   return data;
 }
@@ -705,11 +717,20 @@ async function syncAllQuestionsToApi(){
         const q = unit.questions[i];
         if(q.id) incomingIds.add(q.id);
         const payload = {...q, course:course.title, unit:unit.title, sortOrder:i};
-        await apiJson(`${API_BASE}/api/questions`, {
-          method:"POST",
-          headers:{"content-type":"application/json"},
-          body:JSON.stringify(payload)
-        }, "問題の保存に失敗しました");
+        if(q.id){
+          await apiJson(`${API_BASE}/api/questions/${encodeURIComponent(q.id)}`, {
+            method:"PUT",
+            headers:{"content-type":"application/json"},
+            body:JSON.stringify(payload)
+          }, "問題の更新に失敗しました");
+        }else{
+          const saved = await apiJson(`${API_BASE}/api/questions`, {
+            method:"POST",
+            headers:{"content-type":"application/json"},
+            body:JSON.stringify(payload)
+          }, "問題の作成に失敗しました");
+          if(saved?.id) q.id = saved.id;
+        }
       }
     }
   }
@@ -749,18 +770,44 @@ function renderAnswerInputsByBlankCount(){
   const text = document.getElementById("editAnswers");
   if(!typeEl || !list || !text) return;
   const useList = typeEl.value === "fill_multi" || typeEl.value === "image_fill";
+
+  const currentListAnswers = [...list.querySelectorAll("input[data-answer-index]")].map((input) => normalize(input.value));
+  const textAnswers = text.value.split("\n").map(normalize).filter(Boolean);
+  const savedAnswers = currentListAnswers.length ? currentListAnswers : textAnswers;
+
   list.innerHTML = "";
-  if(!useList){
-    text.classList.remove("hidden");
-    return;
-  }
-  text.classList.add("hidden");
-  const savedAnswers = text.value.split("\n").map(normalize).filter(Boolean);
-  const blankCount = Math.max(Number(document.getElementById("editBlankCount")?.value) || 0, savedAnswers.length);
+  const blankCount = Number(document.getElementById("editBlankCount")?.value) || 0;
   for(let i = 0; i < blankCount; i++){
     const v = savedAnswers[i] || "";
     list.innerHTML += `<label class="fill-multi-row">${esc(toCircledNumber(i + 1))}<input data-answer-index="${i}" value="${esc(v)}" placeholder="${esc(toCircledNumber(i + 1))}の正解"></label>`;
   }
+  text.value = savedAnswers.join("\n");
+}
+
+function toggleAnswerInputMode(){
+  const type = document.getElementById("editType")?.value;
+  const list = document.getElementById("editAnswersList");
+  const text = document.getElementById("editAnswers");
+  const label = document.getElementById("editAnswersLabel");
+  const textActions = document.getElementById("editAnswersTextActions");
+  const multiActions = document.getElementById("editAnswersMultiActions");
+  if(!list || !text || !label || !textActions || !multiActions) return;
+  const isMultiBlank = type === "fill_multi" || type === "image_fill";
+  if(isMultiBlank){
+    label.textContent = "正解（空欄順に入力）";
+    text.classList.add("hidden");
+    list.classList.remove("hidden");
+    textActions.classList.add("hidden");
+    multiActions.classList.remove("hidden");
+    renderAnswerInputsByBlankCount();
+    return;
+  }
+  label.textContent = "正解（1行に1つ。複数空欄は空欄順に入力。○×は ○ または ×）";
+  renderAnswerInputsByBlankCount();
+  list.classList.add("hidden");
+  text.classList.remove("hidden");
+  textActions.classList.remove("hidden");
+  multiActions.classList.add("hidden");
 }
 
 function appendFillMultiBlank(){
