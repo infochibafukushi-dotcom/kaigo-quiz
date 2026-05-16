@@ -8,6 +8,30 @@ const app = document.getElementById("app");
 const TYPES = ["choice", "ox", "multi", "fill", "fill_multi", "image_fill"];
 const TLABEL = { choice: "4択", ox: "○×", multi: "複数選択", fill: "記述", fill_multi: "空欄補充", image_fill: "画像穴埋め" };
 
+const CANONICAL_UNITS = [
+  "人間の尊厳と自立",
+  "介護の基本",
+  "コミュニケーション技術",
+  "社会の理解",
+  "認知症の理解",
+  "発達と老化の理解",
+  "障害の理解",
+  "こころとからだのしくみ1",
+  "こころとからだのしくみ2",
+  "介護過程1",
+  "介護過程2"
+];
+const UNIT_ORDER = new Map(CANONICAL_UNITS.map((name, i) => [name, i]));
+
+function sortUnitsByCanonicalOrder(units = []) {
+  return [...units].sort((a, b) => {
+    const ao = UNIT_ORDER.has(a?.title) ? UNIT_ORDER.get(a.title) : Number.MAX_SAFE_INTEGER;
+    const bo = UNIT_ORDER.has(b?.title) ? UNIT_ORDER.get(b.title) : Number.MAX_SAFE_INTEGER;
+    if (ao !== bo) return ao - bo;
+    return String(a?.title || "").localeCompare(String(b?.title || ""), "ja");
+  });
+}
+
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
 const norm = (v) => String(v ?? "").trim();
 const isMB = (t) => t === "fill_multi" || t === "image_fill";
@@ -22,7 +46,7 @@ function eDB(d) {
       const rawCourseAliasId = c?.id ?? c?.courseId ?? null;
       const courseId = rawCourseId === "" ? null : rawCourseId;
       const courseAliasId = rawCourseAliasId === "" ? null : rawCourseAliasId;
-      const units = Array.isArray(c?.units) ? c.units : [];
+      const units = sortUnitsByCanonicalOrder(Array.isArray(c?.units) ? c.units : []);
       return {
         id: courseAliasId,
         courseId,
