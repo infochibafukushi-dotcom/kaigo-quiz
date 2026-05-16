@@ -749,14 +749,19 @@ function renderAnswerInputsByBlankCount(){
   const text = document.getElementById("editAnswers");
   if(!typeEl || !list || !text) return;
   const useList = typeEl.value === "fill_multi" || typeEl.value === "image_fill";
+
+  const currentListAnswers = [...list.querySelectorAll("input[data-answer-index]")].map((input) => normalize(input.value));
+  const textAnswers = text.value.split("\n").map(normalize).filter(Boolean);
+  const savedAnswers = currentListAnswers.length ? currentListAnswers : textAnswers;
+
   list.innerHTML = "";
   if(!useList){
+    text.value = savedAnswers.join("\n");
     text.classList.remove("hidden");
     return;
   }
   text.classList.add("hidden");
-  const savedAnswers = text.value.split("\n").map(normalize).filter(Boolean);
-  const blankCount = Math.max(Number(document.getElementById("editBlankCount")?.value) || 0, savedAnswers.length);
+  const blankCount = Number(document.getElementById("editBlankCount")?.value) || 0;
   for(let i = 0; i < blankCount; i++){
     const v = savedAnswers[i] || "";
     list.innerHTML += `<label class="fill-multi-row">${esc(toCircledNumber(i + 1))}<input data-answer-index="${i}" value="${esc(v)}" placeholder="${esc(toCircledNumber(i + 1))}の正解"></label>`;
