@@ -26,6 +26,8 @@ async function loadData(){
       </div>
     `;
   }
+
+  renderUnits(0);
 }
 
 function ensureDbShape(data){
