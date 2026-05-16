@@ -20,7 +20,8 @@ export default {
 
       if (url.pathname === "/api/questions" && request.method === "POST") {
         const body = await request.json();
-        if (body?.courseId == null || body?.courseId === "" || body?.unitId == null || body?.unitId === "") {
+        console.log("REQ BODY", JSON.stringify(body, null, 2));
+        if (!body.courseId || !body.unitId) {
           return json({ error: "courseId/unitId missing" }, cors, 400);
         }
         const result = await upsertQuestion(env.DB, body);
@@ -31,7 +32,8 @@ export default {
         const id = Number(url.pathname.split("/").pop());
         if (!Number.isFinite(id) || id <= 0) return json({ error: "invalid id" }, cors, 400);
         const body = await request.json();
-        if (body?.courseId == null || body?.courseId === "" || body?.unitId == null || body?.unitId === "") {
+        console.log("REQ BODY", JSON.stringify(body, null, 2));
+        if (!body.courseId || !body.unitId) {
           return json({ error: "courseId/unitId missing" }, cors, 400);
         }
         const result = await upsertQuestion(env.DB, body, id);
@@ -74,9 +76,15 @@ function json(data, cors, status = 200) {
 
 async function buildQuizJson(DB, admin = false) {
   const { results } = await DB.prepare(`
-    SELECT q.*, u.id AS unit_id, u.is_visible
+    WITH course_ids AS (
+      SELECT course, MIN(id) AS course_id
+      FROM units
+      GROUP BY course
+    )
+    SELECT q.*, u.id AS unit_id, u.is_visible, c.course_id
     FROM questions q
     LEFT JOIN units u ON u.course = q.course AND u.title = q.unit
+    LEFT JOIN course_ids c ON c.course = q.course
     ORDER BY q.course ASC, q.unit ASC, q.sort_order ASC, q.id ASC
   `).all();
 
@@ -86,14 +94,16 @@ async function buildQuizJson(DB, admin = false) {
 
     const courseName = row.course || "未分類";
     const unitName = row.unit || "未分類";
-    const unitId = row.unit_id;
-    if (!unitId) {
-      throw new Error(`API response missing IDs: unit id not found for ${courseName} / ${unitName}`);
+    const courseId = Number(row.course_id);
+    const unitId = Number(row.unit_id);
+    if (!courseId || !unitId) {
+      throw new Error(`API response missing IDs: id not found for ${courseName} / ${unitName}`);
     }
 
     if (!courseMap.has(courseName)) {
       courseMap.set(courseName, {
-        courseId: Number(unitId),
+        id: courseId,
+        courseId,
         title: courseName,
         units: new Map()
       });
@@ -102,21 +112,21 @@ async function buildQuizJson(DB, admin = false) {
     const courseObj = courseMap.get(courseName);
     if (!courseObj.units.has(unitName)) {
       courseObj.units.set(unitName, {
-        id: Number(unitId),
-        unitId: Number(unitId),
+        id: unitId,
+        unitId,
         title: unitName,
         isVisible: Number(row.is_visible ?? 1) !== 0,
         questions: []
       });
     }
 
-    courseObj.units.get(unitName).questions.push(rowToQuestion(row, courseObj.courseId, Number(unitId)));
+    courseObj.units.get(unitName).questions.push(rowToQuestion(row, courseId, unitId));
   }
 
   return {
     appTitle: "カイゴクイズ",
     courses: [...courseMap.values()].map((c) => ({
-      id: c.courseId,
+      id: c.id,
       courseId: c.courseId,
       title: c.title,
       units: [...c.units.values()]
@@ -214,5 +224,18 @@ async function resolveCourseUnitNames(DB, courseIdRaw, unitIdRaw) {
     err.status = 400;
     throw err;
   }
+
+  const courseRow = await DB.prepare(`
+    SELECT MIN(id) AS course_id
+    FROM units
+    WHERE course = ?
+  `).bind(unitRow.course).first();
+
+  if (!courseRow?.course_id || Number(courseRow.course_id) !== courseId) {
+    const err = new Error("courseId/unitId mismatch");
+    err.status = 400;
+    throw err;
+  }
+
   return { course: unitRow.course, unit: unitRow.title };
 }
