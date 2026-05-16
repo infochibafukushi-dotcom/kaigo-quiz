@@ -37,13 +37,6 @@ function ensureDbShape(data){
   return safe;
 }
 
-function ensureDbShape(data){
-  const safe = data && typeof data === "object" ? data : {};
-  if(!Array.isArray(safe.courses)) safe.courses = [];
-  safe.appTitle = normalize(safe.appTitle || "カイゴクイズ");
-  return safe;
-}
-
 async function saveLocalData(showAlert = true){
   await syncAllQuestionsToApi();
   if(showAlert){
@@ -666,6 +659,24 @@ function clearUploadedImage(){
   renderUploadedImagePreview();
 }
 
+
+async function parseJsonSafe(response){
+  try{
+    return await response.json();
+  }catch(e){
+    return null;
+  }
+}
+
+async function apiJson(url, options = {}, fallbackMessage = "APIエラー"){
+  const response = await fetch(url, options);
+  const data = await parseJsonSafe(response);
+  if(!response.ok){
+    const detail = data?.error ? `: ${data.error}` : "";
+    throw new Error(`${fallbackMessage} (${response.status})${detail}`);
+  }
+  return data;
+}
 async function uploadImageToApi(file){
   const form = new FormData();
   form.append("file", file);
@@ -684,7 +695,7 @@ async function uploadImageToApi(file){
 }
 
 async function syncAllQuestionsToApi(){
-  const current = await fetch(`${API_BASE}/api/questions`).then(r => r.json());
+  const current = await apiJson(`${API_BASE}/api/questions`, {}, "問題一覧の取得に失敗しました");
   const currentIds = new Set();
   (current.courses || []).forEach(c => (c.units || []).forEach(u => (u.questions || []).forEach(q => currentIds.add(q.id))));
   const incomingIds = new Set();
@@ -694,17 +705,17 @@ async function syncAllQuestionsToApi(){
         const q = unit.questions[i];
         if(q.id) incomingIds.add(q.id);
         const payload = {...q, course:course.title, unit:unit.title, sortOrder:i};
-        await fetch(`${API_BASE}/api/questions`, {
+        await apiJson(`${API_BASE}/api/questions`, {
           method:"POST",
           headers:{"content-type":"application/json"},
           body:JSON.stringify(payload)
-        });
+        }, "問題の保存に失敗しました");
       }
     }
   }
   for(const id of currentIds){
     if(!incomingIds.has(id)){
-      await fetch(`${API_BASE}/api/questions/${id}`, {method:"DELETE"});
+      await apiJson(`${API_BASE}/api/questions/${id}`, {method:"DELETE"}, "問題の削除に失敗しました");
     }
   }
   await loadData();
@@ -761,7 +772,7 @@ function appendFillMultiBlank(){
   appendAnswer();
 }
 
-function saveQuestion(index){
+async function saveQuestion(index){
   const type = document.getElementById("editType").value;
   const question = normalize(document.getElementById("editQuestion").value);
   const choices = document.getElementById("editChoices").value.split("\n").map(normalize).filter(Boolean);
@@ -776,8 +787,10 @@ function saveQuestion(index){
   if(type !== "image_fill" && !question) return alert("問題文を入力してください");
   if(answers.length === 0) return alert("正解を入力してください");
 
+  const existing = index === null ? null : db.courses[courseIndex].units[unitIndex].questions[index];
   let q = {type, question};
-  if(editingImageData) q.imageData = editingImageData;
+  if(existing?.id) q.id = existing.id;
+  if(editingImageData) q.imageUrl = editingImageData;
   if(type === "fill" || type === "fill_multi"){
     if(type === "fill_multi") q.blankCount = blankCount;
     q.answers = answers;
@@ -800,24 +813,36 @@ function saveQuestion(index){
   }else{
     arr[index] = q;
   }
-  saveLocalData(false);
-  renderAdmin();
+  try{
+    await saveLocalData(false);
+    renderAdmin();
+  }catch(e){
+    alert(`保存に失敗しました: ${e?.message || e}`);
+  }
 }
 
-function deleteQuestion(i){
+async function deleteQuestion(i){
   if(!confirm("この問題を削除しますか？")) return;
   db.courses[courseIndex].units[unitIndex].questions.splice(i,1);
-  saveLocalData(false);
-  renderAdmin();
+  try{
+    await saveLocalData(false);
+    renderAdmin();
+  }catch(e){
+    alert(`保存に失敗しました: ${e?.message || e}`);
+  }
 }
 
-function moveQuestion(i, dir){
+async function moveQuestion(i, dir){
   const arr = db.courses[courseIndex].units[unitIndex].questions;
   const ni = i + dir;
   if(ni < 0 || ni >= arr.length) return;
   [arr[i], arr[ni]] = [arr[ni], arr[i]];
-  saveLocalData(false);
-  renderAdmin();
+  try{
+    await saveLocalData(false);
+    renderAdmin();
+  }catch(e){
+    alert(`保存に失敗しました: ${e?.message || e}`);
+  }
 }
 
 function downloadJson(){
