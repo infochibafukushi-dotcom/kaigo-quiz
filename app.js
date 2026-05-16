@@ -1014,18 +1014,18 @@ else if (action === "back-units") {
     const el = document.querySelector(`[data-blank-result="${index}"]`);
     if (!el) return;
 
-    if (!value) {
-      ok = false;
-      el.className = "blank-result blank-pending";
-      el.textContent = "⚪ 未回答";
-    } else if (patterns.includes(value)) {
-      el.className = "blank-result blank-ok";
-      el.textContent = "⭕ 正解";
-    } else {
-      ok = false;
-      el.className = "blank-result blank-ng";
-      el.textContent = "❌ 正解: " + (patterns[0] || answerText);
-    }
+  if (!value) {
+  ok = false;
+  el.className = "blank-result blank-ng";
+  el.textContent = "❌ 正解: " + (patterns[0] || answerText);
+} else if (patterns.includes(value)) {
+  el.className = "blank-result blank-ok";
+  el.textContent = "⭕ 正解";
+} else {
+  ok = false;
+  el.className = "blank-result blank-ng";
+  el.textContent = "❌ 正解: " + (patterns[0] || answerText);
+}
   });
 
   judge(ok, expected.join(", "));
