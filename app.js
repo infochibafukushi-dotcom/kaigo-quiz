@@ -1026,7 +1026,7 @@ else if (action === "back-units") {
     } else {
       ok = false;
       el.className = "blank-result blank-ng";
-      el.textContent = `❌ 正解: ${patterns[0] || answerText}`;
+　　　el.textContent = `❌ 正解: ${patterns[0] || answerText}`;
     }
   });
 
