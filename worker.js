@@ -419,7 +419,7 @@ function parseArray(value) {
   }
 }
 
-function normalizeQuestionPayload(payload) {
+async function normalizeQuestionPayload(env, payload) {
   const type = String(payload?.type || "fill").trim();
   const questionText = String(payload?.question || "").trim();
   if (!questionText) {
@@ -435,7 +435,7 @@ function normalizeQuestionPayload(payload) {
   }
 
   const course = String(payload?.course || payload?.courseId || CANONICAL_COURSE_TITLE).trim() || CANONICAL_COURSE_TITLE;
-  const unit = normalizeUnitTitle(payload?.unit || payload?.unitTitle || payload?.unitId || "");
+  const unit = await resolveUnitTitle(env, payload);
 
   if (!unit) {
     throw new Error("保存先単元が空です");
@@ -458,8 +458,26 @@ function normalizeQuestionPayload(payload) {
   };
 }
 
+
+async function resolveUnitTitle(env, payload) {
+  const fromText = normalizeUnitTitle(payload?.unit || payload?.unitTitle || "");
+  if (fromText) return fromText;
+
+  const rawUnitId = payload?.unitId;
+  if (rawUnitId === undefined || rawUnitId === null || rawUnitId === "") return "";
+
+  const unitId = Number(rawUnitId);
+  if (!Number.isFinite(unitId) || unitId <= 0) {
+    return normalizeUnitTitle(String(rawUnitId));
+  }
+
+  const row = await env.DB.prepare("SELECT title FROM units WHERE id = ? LIMIT 1").bind(unitId).first();
+  if (!row?.title) return "";
+  return normalizeUnitTitle(row.title);
+}
+
 async function createQuestion(env, payload) {
-  const data = normalizeQuestionPayload(payload);
+  const data = await normalizeQuestionPayload(env, payload);
   await ensureCanonicalUnits(env);
   await ensureUnitExists(env, data.course, data.unit);
 
@@ -503,7 +521,7 @@ async function createQuestion(env, payload) {
 }
 
 async function updateQuestion(env, id, payload) {
-  const data = normalizeQuestionPayload({ ...payload, id });
+  const data = await normalizeQuestionPayload(env, { ...payload, id });
   await ensureCanonicalUnits(env);
   await ensureUnitExists(env, data.course, data.unit);
 
