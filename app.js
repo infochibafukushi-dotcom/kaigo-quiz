@@ -54,10 +54,10 @@ const gAns = (q) => { const n = Math.max(1, Number(q.blankCount) || 1), a = Arra
 async function api(path, init = {}) { const r = await fetch(`${API_BASE}${path}`, init); if (!r.ok) throw new Error(`${r.status} ${r.statusText}`); const ct = r.headers.get("content-type") || ""; return ct.includes("application/json") ? r.json() : r.text(); }
 async function loadData(admin = false) {
   const raw = await api(`/api/questions${admin ? "?admin=1" : ""}`);
-  console.log("RAW API", raw);
+  console.log("RAW API FULL", JSON.stringify(raw, null, 2));
   db = eDB(raw);
-  console.log("DB", db);
-  console.log("COURSES", db.courses);
+  console.log("DB FULL", JSON.stringify(db, null, 2));
+  console.log("COURSES FULL", JSON.stringify(db.courses, null, 2));
 }
 
 function curUnit() { return db.courses[courseIndex]?.units?.[unitIndex]; }
