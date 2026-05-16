@@ -1,19 +1,19 @@
-BEGIN TRANSACTION;
+# OCR Blocker Report
 
-DELETE FROM questions;
-DELETE FROM units;
+Date: 2026-05-15 (UTC)
 
-INSERT INTO units (course, title, is_visible) VALUES
-  ('介護福祉士実務者研修', '人間の尊厳と自立', 1),
-  ('介護福祉士実務者研修', '介護の基本', 1),
-  ('介護福祉士実務者研修', 'コミュニケーション技術', 1),
-  ('介護福祉士実務者研修', '社会の理解', 1),
-  ('介護福祉士実務者研修', '認知症の理解', 1),
-  ('介護福祉士実務者研修', '発達と老化の理解', 1),
-  ('介護福祉士実務者研修', '障害の理解', 1),
-  ('介護福祉士実務者研修', 'こころとからだのしくみ1', 1),
-  ('介護福祉士実務者研修', 'こころとからだのしくみ2', 1),
-  ('介護福祉士実務者研修', '介護過程1', 1),
-  ('介護福祉士実務者研修', '介護過程2', 1);
+Requested task: OCR and full structuring of uploaded 「社会の理解」確認テスト images.
 
-COMMIT;
+## Result
+No source image/PDF files were found in this execution environment under `/workspace/kaigo-quiz` or `/workspace`.
+
+Checked file types:
+- `.png`
+- `.jpg` / `.jpeg`
+- `.webp`
+- `.pdf`
+
+Because the original pages are unavailable in the container, OCR extraction cannot be performed without fabricating text, which is explicitly disallowed by the task requirements.
+
+## Next action required
+Provide the original page image/PDF files in the repository or accessible filesystem path, then rerun OCR.

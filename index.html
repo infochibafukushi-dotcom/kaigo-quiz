@@ -22,45 +22,6 @@ const CANONICAL_UNITS = [
   "介護過程2"
 ];
 const UNIT_ORDER = new Map(CANONICAL_UNITS.map((name, i) => [name, i]));
-const DEFAULT_COURSE_TITLE = "介護福祉士実務者研修";
-const UNIT_ALIAS = new Map([
-  ["老化の理解", "発達と老化の理解"],
-  ["こころとからだのしくみ", "こころとからだのしくみ1"],
-  ["こころとからだのしくみ①", "こころとからだのしくみ1"],
-  ["こころとからだのしくみ１", "こころとからだのしくみ1"],
-  ["こころとからだのしくみⅠ", "こころとからだのしくみ1"],
-  ["こころとからだのしくみ②", "こころとからだのしくみ2"],
-  ["こころとからだのしくみ２", "こころとからだのしくみ2"],
-  ["こころとからだのしくみⅡ", "こころとからだのしくみ2"],
-  ["介護過程①", "介護過程1"],
-  ["介護過程１", "介護過程1"],
-  ["介護過程Ⅰ", "介護過程1"],
-  ["介護過程②", "介護過程2"],
-  ["介護過程２", "介護過程2"],
-  ["介護過程Ⅱ", "介護過程2"]
-]);
-
-function normalizeUnitTitle(input) {
-  const raw = String(input || "").trim();
-  if (!raw) return raw;
-  const collapsed = raw.replace(/[ 　]+/g, "");
-  return UNIT_ALIAS.get(collapsed) || (CANONICAL_UNITS.includes(collapsed) ? collapsed : raw);
-}
-
-function createCanonicalCourse(title = DEFAULT_COURSE_TITLE) {
-  return {
-    id: null,
-    courseId: null,
-    title,
-    units: CANONICAL_UNITS.map((name) => ({
-      id: null,
-      unitId: null,
-      title: name,
-      isVisible: true,
-      questions: []
-    }))
-  };
-}
 
 function sortUnitsByCanonicalOrder(units = []) {
   return [...units].sort((a, b) => {
@@ -78,72 +39,38 @@ const nQ = (q = {}) => ({ type: q.type || "fill", question: q.question || "", ex
 
 function eDB(d) {
   const courses = Array.isArray(d?.courses) ? d.courses : [];
-  const normalizedCourses = courses.map((c) => {
-    const rawCourseId = c?.courseId ?? c?.id ?? null;
-    const rawCourseAliasId = c?.id ?? c?.courseId ?? null;
-    const courseId = rawCourseId === "" ? null : rawCourseId;
-    const courseAliasId = rawCourseAliasId === "" ? null : rawCourseAliasId;
-    const unitMap = new Map();
-
-    for (const u of (Array.isArray(c?.units) ? c.units : [])) {
-      const normalizedTitle = normalizeUnitTitle(u?.title || "");
-      if (!normalizedTitle) continue;
-      const rawUnitId = u?.unitId ?? u?.id ?? null;
-      const rawUnitAliasId = u?.id ?? u?.unitId ?? null;
-      const unitId = rawUnitId === "" ? null : rawUnitId;
-      const unitAliasId = rawUnitAliasId === "" ? null : rawUnitAliasId;
-      const questions = Array.isArray(u?.questions) ? u.questions.map(nQ) : [];
-      questions.forEach((q) => {
-        if ((q.unitId == null || q.unitId === "") && unitId != null) q.unitId = unitId;
-        if ((q.courseId == null || q.courseId === "") && courseId != null) q.courseId = courseId;
-      });
-
-      if (!unitMap.has(normalizedTitle)) {
-        unitMap.set(normalizedTitle, {
-          id: unitAliasId,
-          unitId,
-          title: normalizedTitle,
-          isVisible: u?.isVisible !== false,
-          questions
-        });
-      } else {
-        const existing = unitMap.get(normalizedTitle);
-        if ((existing.unitId == null || existing.unitId === "") && unitId != null) {
-          existing.id = unitAliasId;
-          existing.unitId = unitId;
-        }
-        existing.isVisible = existing.isVisible !== false || u?.isVisible !== false;
-        existing.questions.push(...questions);
-      }
-    }
-
-    for (const title of CANONICAL_UNITS) {
-      if (!unitMap.has(title)) {
-        unitMap.set(title, {
-          id: null,
-          unitId: null,
-          title,
-          isVisible: true,
-          questions: []
-        });
-      }
-    }
-
-    return {
-      id: courseAliasId,
-      courseId,
-      title: c?.title || DEFAULT_COURSE_TITLE,
-      units: sortUnitsByCanonicalOrder([...unitMap.values()])
-    };
-  });
-
-  if (!normalizedCourses.length) {
-    normalizedCourses.push(createCanonicalCourse());
-  }
-
   return {
     appTitle: d?.appTitle || "カイゴクイズ",
-    courses: normalizedCourses
+    courses: courses.map((c) => {
+      const rawCourseId = c?.courseId ?? c?.id ?? null;
+      const rawCourseAliasId = c?.id ?? c?.courseId ?? null;
+      const courseId = rawCourseId === "" ? null : rawCourseId;
+      const courseAliasId = rawCourseAliasId === "" ? null : rawCourseAliasId;
+      const units = sortUnitsByCanonicalOrder(Array.isArray(c?.units) ? c.units : []);
+      return {
+        id: courseAliasId,
+        courseId,
+        title: c?.title || "",
+        units: units.map((u) => {
+          const rawUnitId = u?.unitId ?? u?.id ?? null;
+          const rawUnitAliasId = u?.id ?? u?.unitId ?? null;
+          const unitId = rawUnitId === "" ? null : rawUnitId;
+          const unitAliasId = rawUnitAliasId === "" ? null : rawUnitAliasId;
+          const questions = Array.isArray(u?.questions) ? u.questions.map(nQ) : [];
+          questions.forEach((q) => {
+            if ((q.unitId == null || q.unitId === "") && unitId != null) q.unitId = unitId;
+            if ((q.courseId == null || q.courseId === "") && courseId != null) q.courseId = courseId;
+          });
+          return {
+            id: unitAliasId,
+            unitId,
+            title: u?.title || "",
+            isVisible: u?.isVisible !== false,
+            questions
+          };
+        })
+      };
+    })
   };
 }
 
