@@ -1,32 +1,45 @@
 DELETE FROM questions;
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill','人間の理解は、（　　　）の姿を知ることから始まります。生活の営みとは、日々の暮らしをつくっている現実の状況です。','[]','["生活の営み"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',0);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('image_fill','','[]','[]',8,'介護福祉士実務者研修','人間の尊厳と自立','','/assets/questions/icf_q1.png',1);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill_multi','介護職とは、人々の生活支援をする専門職です。人間の生活を過去、現在、未来への視点から理解し、現在の（　　　）を理解することで、どのような生活支援を求めているかを総合的に理解します。そのため、介護職は人間の（　　　）を求められています。','[]','["生活の支障","多面的な理解"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',2);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill_multi','介護が目指す自立支援の意義は、自らの（　　　）にもとづいて自力でできることを増やしながら、その人がしたいと思うことを満たすことで（　　　）を高め、介護が必要になっても（　　　）した日々を送れるように支えることです。','[]','["意思","生活の意欲","充実"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',3);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill_multi','介護保険サービスや障害福祉サービスの利用においては、利用者の（　　　）と（　　　）の権利が保障されている。','[]','["自己選択","自己決定"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',4);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('choice','エンパワメントとは、次のうちどれか。','["自らの権利侵害に対して、支援者に解決を求める力のこと。","自らの問題を自らが解決することのできる力を獲得していくこと。"]','["自らの問題を自らが解決することのできる力を獲得していくこと。"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',5);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('choice','権利擁護とは、次のうちどれか。','["判断能力が十分でない人の権利を守るため、生活の支援や財産の管理をおこなうこと。","自己の権利やニーズを表明することが困難な利用者にかわって代理として、その権利やニーズの充足を行うこと。"]','["自己の権利やニーズを表明することが困難な利用者にかわって代理として、その権利やニーズの充足を行うこと。"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',6);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill','ADLの意味を記入しなさい。','[]','["日常生活の活動動作","日常生活動作"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',7);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill','QOLの意味を記入しなさい。','[]','["生活の質"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',8);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill','ILの意味を記入しなさい。','[]','["自立生活"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',9);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill','日本において尊厳に関する諸規定の中心となるものは（　　　）です。','[]','["日本国憲法"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',10);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill_multi','憲法第13条の（　　　）は人権の基礎となるものであり、生命、自由および（　　　）に対する国民の権利を規定しています。','[]','["個人の尊重","幸福追求"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',11);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill_multi','憲法第25条は（　　　）の条項であり、健康で文化的な生活とは人間の（　　　）が生活のうえで実質的に（　　　）されることを意味しています。','[]','["生存権","尊厳","保持"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',12);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill','尊厳に関する規定は、（　　　）においてもみることができます。','[]','["障害者基本法"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',13);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('ox','介護職は利用者の日常生活において、介護者が主体者であることを絶えず念頭に置くことが重要です。','[]','["○"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',14);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('ox','自らの理性や価値観、社会規範など照らし、行動するか否かを自己決定することを自律と言う。','[]','["○"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',15);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('ox','支援者の支援に対する知識や技術が不十分なことや未熟であることによって起きる権利侵害もあります。','[]','["○"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',16);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('ox','利用者に対する虐待行為や権利の侵害は、行為者が意図的に行っている。','[]','["×"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',17);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('ox','利用者が意欲を持たないままの自立支援は、自立の強要になりかねません。','[]','["○"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',18);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('ox','養護者による虐待はどんな理由であれ許される事ではないので、養護者に対して一方的に非難する必要がある。','[]','["×"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',19);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('ox','養介護施設従事者等による高齢者虐待の種別では、「介護等放棄（ネグレクト）」がもっとも多い。','[]','["×"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',20);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill','厚生労働省は「身体拘束ゼロへの手引き」を示して、介護の分野において（　　　）をめざしています。','[]','["身体拘束禁止"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',21);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill_multi','身体拘束は利用者の（　　　）だけではなく、（　　　）をおびやかす援助方法である事を示し、廃止に向けた努力と（　　　）を求めています。','[]','["尊厳","安全","決意"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',22);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill_multi','また、身体拘束をおこなうケアの原則を示すとともに、やむを得ない場合として（　　　）（　　　）（　　　）の3要件すべてを満たすことをあげて、手続きや（　　　）についての方針等について（　　　）に示しています。','[]','["切迫性","非代替性","一時性","記録","具体的"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',23);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('multi','高齢者虐待について介護職に求められている事を3つ選びなさい。','["介護職の価値観を分かりやすく説明する","利用者に対して尊厳を保持した介護を実践する社会的な責任の自覚","感情のコントロールを身に着ける努力","高い倫理観とそれに基づいた行動","チームの一員としての統率力を身に着ける"]','["利用者に対して尊厳を保持した介護を実践する社会的な責任の自覚","感情のコントロールを身に着ける努力","高い倫理観とそれに基づいた行動"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',24);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill_multi','介護とは「してあげる」「出来ない所をやってあげる」という支援ではなく、利用者本人の（　　　）を支え、（　　　）を引き出しながら、（　　　）につなげていくという支援が大切です。','[]','["尊厳","意欲","行動"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',25);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill_multi','意欲は（　　　）があって生まれます。マズローによれば（　　　）の欲求が満たされてこそ、さらなる上位の欲求を求める気持ちがはたらくとされています。','[]','["欲求","下位"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',26);
-INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill','欠乏欲求には生理的欲求をはじめ安全の欲求、（　　　）、承認の欲求が含まれます。','[]','["所属・愛情の欲求"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',27);
+INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill_multi','人間の理解は、（　　　）の姿を知ることから始まります。生活の営みとは、日々の暮らしをつくっている現実の状況です。
+介護職とは、人々の生活支援をする専門職です。人間の生活を過去、現在、未来への視点から理解し、現在の（　　　）を理解することで、どのような生活支援を求めているかを総合的に理解します。そのため、介護職は人間の（　　　）を求められています。
+人間の尊厳とは、人間が（　　　）されることを意味しています。それはその人らしい生き方が尊重されることです。
+介護職が目指す自立支援の意義は、自らの（　　　）にもとづいて自力でできることを増やしながら、その人がしたいと思うことを満たすことで（　　　）を高め、介護が必要になっても（　　　）した日々を送れるように支えること。
+介護保険サービスや障害福祉サービスの利用においては、利用者の（　　　） と（　　　）の権利が保障されている。','["意思", "自己選択", "生活の意欲", "生活の文脈", "個人として尊重", "自己決定", "充実", "多角的な理解", "多面的な理解", "自律支援", "生活の営み", "生活の仕方"]','["生活の営み", "生活の支障", "多面的な理解", "個人として尊重", "意思", "生活の意欲", "充実", "自己選択", "自己決定"]',9,'介護福祉士実務者研修','人間の尊厳と自立','','',0);
+INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill_multi','1. エンパワメントとは（　　　）
+2. 権利擁護とは（　　　）','["① 自らの権利侵害に対して、支援者に解決を求める力のこと。", "② 自らの問題を自らが解決することのできる力を獲得していくこと。", "① 判断能力が十分でない人の権利を守るため、生活の支援や財産の管理をおこなうこと。", "② 自己の権利やニーズを表明することが困難な利用者に代わって代理として、その権利やニーズの充足を行うこと。"]','["②", "②"]',2,'介護福祉士実務者研修','人間の尊厳と自立','','',1);
+INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill_multi','ADL→（　　　）
+QOL→（　　　）
+IL→（　　　）','[]','["日常生活の活動・動作", "生活の質", "自立生活"]',3,'介護福祉士実務者研修','人間の尊厳と自立','','',2);
+INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill_multi','日本において尊厳に関する諸規定の中心となるものは（　　　）です。
+
+憲法第13条の（　　　）は人権の基礎となるものであり、生命、自由および（　　　）に対する国民の権利を規定しています。
+
+憲法第25条は（　　　）の条項であり、健康で文化的な生活とは人間の（　　　）が生活のうえで実質的に（　　　）されることを意味しています。
+
+また、尊厳に関する規定は、（　　　）においてもみることができます。','[]','["日本国憲法", "個人の尊重", "幸福追求", "生存権", "尊厳", "保持", "障害者基本法"]',7,'介護福祉士実務者研修','人間の尊厳と自立','','',3);
+INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill_multi','1. 介護職は利用者の日常生活において、介護者が主体者であることを絶えず念頭に置くことが重要です。
+2. 自らの理性や価値観、社会規範などと照らし、行動するか否かを自己決定することを自律と言う。
+3. 支援者の支援に対する知識や技術が不十分なことや未熟であることによって起きる権利侵害もあります。
+4. 利用者に対する虐待行為や権利の侵害は、行為者が意図的に行っている。
+5. 利用者が意欲を持たないままの自立支援は、自立の強要になりかねません。
+6. 養護者による虐待はどんな理由であれ許される事ではないので、養護者に対して一方的に非難する必要がある。
+7. 養介護施設従事者等による高齢者虐待の種別では、「介護等放棄（ネグレクト）」がもっとも多い。','[]','["○", "○", "○", "×", "〇", "×", "×"]',7,'介護福祉士実務者研修','人間の尊厳と自立','','',4);
+INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill_multi','厚生労働省は「身体拘束ゼロへの手引き」を示して、介護の分野において（　　　）をめざしています。
+
+身体拘束は利用者の（　　　）だけではなく、（　　　）をおびやかす援助方法である事を示し、廃止に向けた努力と（　　　）を求めています。
+
+また、身体拘束をおこなうケアの原則を示すとともに、やむを得ない場合として
+
+（　　　）（　　　）（　　　）
+
+の3要件すべてを満たすことをあげて、手続きや（　　　）についての方針等について（　　　）に示しています。','["① 切迫性", "② 緊急性", "③ 安全", "④ 一時性", "⑤ 非代替性", "⑥ 決意", "⑦ 熟慮", "⑧ 多面性", "⑨ 継続性", "⑩ 身体拘束禁止", "⑪ 自立支援", "⑫ 記録", "⑬ 実施", "⑭ 具体的", "⑮ 尊厳"]','["⑩", "⑮", "③", "⑥", "①", "⑤", "④", "⑫", "⑭"]',9,'介護福祉士実務者研修','人間の尊厳と自立','','',5);
+INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('multi','高齢者虐待について介護職に求められている事を下記から3つ選びなさい。','["1. 介護職の価値観を分かりやすく説明する", "2. 利用者に対して尊厳を保持した介護を実践する社会的な責任の自覚", "3. 感情のコントロールを身に着ける努力", "4. 高い倫理観とそれに基づいた行動", "5. チームの一員としての統率力を身に着ける"]','["2. 利用者に対して尊厳を保持した介護を実践する社会的な責任の自覚", "3. 感情のコントロールを身に着ける努力", "4. 高い倫理観とそれに基づいた行動"]',0,'介護福祉士実務者研修','人間の尊厳と自立','','',6);
+INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill_multi','介護とは「してあげる」「出来ない所をやってあげる」という支援ではなく、利用者本人の（　　　）を支え、（　　　）を引き出しながら、（　　　）につなげていくという支援が大切です。
+
+意欲は（　　　）があって生まれます。
+
+マズローによれば（　　　）の欲求が満たされてこそ、さらなる上位の欲求を求める気持ちがはたらくとされています。
+
+欠乏欲求には生理的欲求をはじめ安全の欲求、（　　　）、承認の欲求が含まれます。','["① 尊厳", "② 自己実現の欲求", "③ 意欲", "④ 行動", "⑤ 所属・愛情の欲求", "⑥ 欲求", "⑦ 権利", "⑧ 下位"]','["①", "③", "④", "⑥", "⑧", "⑤"]',6,'介護福祉士実務者研修','人間の尊厳と自立','','',7);
 INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill','「高齢者とは・・・」という、一律な考え方は（　　　）と呼ばれ、一人ひとりの高齢者の個別的な心理的理解のさまたげになる場合がある。','[]','["ステレオタイプ"]',0,'介護福祉士実務者研修','老化の理解','','',0);
 INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill','老化による心身機能の変化は誰にでも生じることですが、変化の程度は、同じ年齢でも（　　　）が大きいことが特徴です。','[]','["個人差"]',0,'介護福祉士実務者研修','老化の理解','','',1);
 INSERT INTO questions (type,question,choices_json,answer_json,blank_count,course,unit,explanation,image_url,sort_order) VALUES ('fill','職業からの引退など社会的役割の変化、同時に家族関係の変化や役割の変化が、心理や行動に大きな影響を与えます。また、配偶者や友人の死別といった（　　　）をする人が多くなります。','[]','["喪失体験"]',0,'介護福祉士実務者研修','老化の理解','','',2);
