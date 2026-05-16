@@ -4,12 +4,12 @@ compatibility_date = "2026-05-16"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "kaigo-quiz-db"
-database_id = "016e7c-87a8-4048-9685-87830386c307"
+database_name = "kaigo-quiz"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
 
 [[r2_buckets]]
 binding = "QUIZ_IMAGES"
 bucket_name = "kaigo-quiz-images"
 
 [vars]
-R2_PUBLIC_BASE_URL = "https://pub-40d1fba7f9264555aa707424f181fde5.r2.dev"
+R2_PUBLIC_BASE_URL = "https://REPLACE_WITH_PUBLIC_R2_DOMAIN"

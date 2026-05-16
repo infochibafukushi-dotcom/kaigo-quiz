@@ -7,24 +7,34 @@ let lastResultShown = false;
 let editingImageData = "";
 
 const app = document.getElementById("app");
-const API_BASE = "https://kaigo-quiz-save.info-chibafukushi.workers.dev";
+const API_BASE = window.KAIGO_QUIZ_API_BASE || "https://kaigo-quiz-save.info-chibafukushi.workers.dev";
 
-async function loadData() {
-  const res = await fetch(`${API_BASE}/api/questions?ts=` + Date.now());
-  db = await res.json();
-
-  if (!db.courses || db.courses.length === 0) {
-    db.courses = [
-      {
-        title: "介護福祉士実務者研修",
-        units: []
-      }
-    ];
-    renderAdmin();
-    return;
+async function loadData(){
+  try{
+    const res = await fetch(`${API_BASE}/api/questions?ts=` + Date.now());
+    if(!res.ok) throw new Error(`APIエラー: ${res.status}`);
+    db = ensureDbShape(await res.json());
+    renderUnits(0);
+  }catch(e){
+    db = ensureDbShape(null);
+    app.innerHTML = `
+      <div class="card">
+        <h1>データ読み込みエラー</h1>
+        <p class="sub">${esc(String(e?.message || e))}</p>
+        <button onclick="loadData()">再試行</button>
+        <button class="secondary" onclick="renderAdmin()">管理画面を開く</button>
+      </div>
+    `;
   }
 
   renderUnits(0);
+}
+
+function ensureDbShape(data){
+  const safe = data && typeof data === "object" ? data : {};
+  if(!Array.isArray(safe.courses)) safe.courses = [];
+  safe.appTitle = normalize(safe.appTitle || "カイゴクイズ");
+  return safe;
 }
 
 async function saveLocalData(showAlert = true){
@@ -111,6 +121,21 @@ function toCircledNumber(n){
 }
 
 function renderUnits(ci = 0){
+  db = ensureDbShape(db);
+  if(db.courses.length === 0){
+    app.innerHTML = `
+      <div class="topbar">
+        <div class="left-actions">
+          <button class="secondary" onclick="renderAdmin()">⚙ 管理</button>
+        </div>
+      </div>
+      <div class="card">
+        <h1 class="page-title">${esc(db.appTitle || "カイゴクイズ")}</h1>
+        <p class="sub">問題がまだありません。管理画面から大分類・単元・問題を追加してください。</p>
+      </div>
+    `;
+    return;
+  }
   courseIndex = ci;
   const c = db.courses[ci];
   let html = `
@@ -354,6 +379,12 @@ function nextQuestion(){
 }
 
 function renderAdmin(){
+  db = ensureDbShape(db);
+  if(db.courses.length === 0){
+    db.courses.push({title:"新しい大分類", units:[{title:"新しい単元", questions:[]}]});
+    courseIndex = 0;
+    unitIndex = 0;
+  }
   const c = db.courses[courseIndex] || db.courses[0];
   const u = c.units[unitIndex] || c.units[0];
 
