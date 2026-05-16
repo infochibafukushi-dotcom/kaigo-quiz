@@ -357,7 +357,12 @@ function renderQuestion() {
   } else {
     const blankCount = Math.max(1, Number(question.blankCount) || 1);
     for (let i = 0; i < blankCount; i += 1) {
-      html += `<input class="blank-input" placeholder="アンサー${i + 1}" autocomplete="off">`;
+html += `
+  <div class="blank-row">
+    <input class="blank-input" placeholder="アンサー${i + 1}" autocomplete="off">
+    <div class="blank-result" data-blank-result="${i}"></div>
+  </div>
+`;
     }
     html += `<button data-act="ans-fill-multi">回答</button>`;
   }
@@ -985,7 +990,48 @@ else if (action === "back-units") {
       .sort()
       .join("|");
     judge(got === expected, (question.answers || []).join(", "));
-  } else if (action === "ans-fill-multi") {
+} else if (action === "ans-fill-multi") {
+  const question = curQuestion();
+  const inputs = [...document.querySelectorAll(".blank-input")];
+  const got = inputs.map((item) => norm(item.value));
+  const expected = getAnswersForMultiBlank(question);
+
+  let ok = got.length === expected.length;
+
+  expected.forEach((_, index) => {
+    const el = document.querySelector(`[data-blank-result="${index}"]`);
+    if (el) {
+      el.className = "blank-result";
+      el.textContent = "";
+    }
+  });
+
+  expected.forEach((_, index) => {
+    const value = got[index] || "";
+    const answerText = String(expected[index] || "");
+    const patterns = answerText
+      .split("|")
+      .map((v) => norm(v));
+
+    const el = document.querySelector(`[data-blank-result="${index}"]`);
+    if (!el) return;
+
+    if (!value) {
+      ok = false;
+      el.className = "blank-result blank-pending";
+      el.textContent = "⚪ 未回答";
+    } else if (patterns.includes(value)) {
+      el.className = "blank-result blank-ok";
+      el.textContent = "⭕ 正解";
+    } else {
+      ok = false;
+      el.className = "blank-result blank-ng";
+      el.textContent = `❌ 正解: ${patterns[0] || answerText}`;
+    }
+  });
+
+  judge(ok, expected.join(", "));
+}
     const question = curQuestion();
     const got = [...document.querySelectorAll(".blank-input")].map((item) => norm(item.value));
    const expected = getAnswersForMultiBlank(question);
