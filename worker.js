@@ -36,15 +36,15 @@ const UNIT_ORDER = new Map(CANONICAL_UNITS.map((name, index) => [name, index]));
 
 const corsHeaders = {
   "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-  "access-control-allow-headers": "content-type",
+  "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "access-control-allow-headers": "Content-Type, Authorization",
   "access-control-max-age": "86400"
 };
 
 export default {
   async fetch(request, env) {
     if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: corsHeaders });
+      return new Response(null, { status: 200, headers: corsHeaders });
     }
 
     try {
