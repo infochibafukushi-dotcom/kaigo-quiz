@@ -1017,14 +1017,14 @@ else if (action === "back-units") {
   if (!value) {
   ok = false;
   el.className = "blank-result blank-ng";
-  el.textContent = "❌ 正解: " + (patterns[0] || answerText);
+ el.textContent = "❌ 正解: " + answerText.replaceAll("|", " / ");
 } else if (patterns.includes(value)) {
   el.className = "blank-result blank-ok";
-  el.textContent = "⭕ 正解";
+    el.textContent = "⭕ 正解: " + answerText.replaceAll("|", " / ");
 } else {
   ok = false;
   el.className = "blank-result blank-ng";
-  el.textContent = "❌ 正解: " + (patterns[0] || answerText);
+ el.textContent = "❌ 正解: " + answerText.replaceAll("|", " / ");
 }
   });
 
