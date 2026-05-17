@@ -202,6 +202,41 @@ function normalizeDatabase(rawData) {
   };
 }
 
+
+function upsertUnitQuestionsFromImport(rawData) {
+  const unitTitle = normalizeUnitTitle(rawData?.unitTitle || "");
+  if (!unitTitle) throw new Error("unitTitle が必要です");
+  if (!Array.isArray(rawData?.questions)) throw new Error("questions は配列で指定してください");
+
+  if (!Array.isArray(db.courses) || db.courses.length === 0) {
+    db.courses = [{ id: null, courseId: null, title: CANONICAL_COURSE_TITLE, units: [] }];
+  }
+
+  const course = db.courses[0] || { id: null, courseId: null, title: CANONICAL_COURSE_TITLE, units: [] };
+  if (!db.courses[0]) db.courses[0] = course;
+  if (!Array.isArray(course.units)) course.units = [];
+
+  const existingUnit = course.units.find((unit) => normalizeUnitTitle(unit?.title) === unitTitle);
+  const unitId = existingUnit?.unitId ?? existingUnit?.id ?? null;
+  const courseId = course.courseId ?? course.id ?? null;
+  const importedQuestions = rawData.questions.map((question) => normalizeQuestion(question, courseId, unitId));
+
+  if (existingUnit) {
+    existingUnit.questions = importedQuestions;
+    existingUnit.title = unitTitle;
+    existingUnit.isVisible = existingUnit.isVisible !== false;
+  } else {
+    course.units.push({
+      id: null,
+      unitId: null,
+      title: unitTitle,
+      isVisible: true,
+      questions: importedQuestions
+    });
+  }
+
+  course.units = sortUnitsByCanonicalOrder(course.units);
+}
 function getAnswersForMultiBlank(question) {
   const blankCount = Math.max(1, Number(question.blankCount) || 1);
   const answers = Array.isArray(question.answers) ? question.answers.slice() : [];
@@ -1291,9 +1326,11 @@ document.addEventListener("change", async (event) => {
     if (!file) return;
     try {
       const text = await file.text();
-      db = normalizeDatabase(JSON.parse(text));
-      courseIndex = 0;
-      unitIndex = 0;
+      const raw = JSON.parse(text);
+      upsertUnitQuestionsFromImport(raw);
+      db = normalizeDatabase(db);
+      courseIndex = clampIndex(courseIndex, db.courses.length);
+      unitIndex = clampIndex(unitIndex, db.courses[courseIndex]?.units?.length || 0);
       renderAdmin();
     } catch (error) {
       alert(`JSON読込エラー: ${error.message}`);
