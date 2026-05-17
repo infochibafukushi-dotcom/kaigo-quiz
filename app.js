@@ -944,6 +944,116 @@ function updateAnswerInputsByBlankCount() {
   box.innerHTML = html;
 }
 
+
+
+async function saveAllImportedQuestions() {
+  if (saving) return;
+
+  console.log("IMPORT SAVE START");
+  saving = true;
+
+  const errors = [];
+  const allQuestions = [];
+
+  db.courses.forEach((course, ci) => {
+    (course.units || []).forEach((unit, ui) => {
+      (unit.questions || []).forEach((question, qi) => {
+        allQuestions.push({ course, unit, question, ci, ui, qi });
+      });
+    });
+  });
+
+  const total = allQuestions.length;
+
+  for (let i = 0; i < total; i += 1) {
+    const item = allQuestions[i];
+    const { course, question } = item;
+    let { unit } = item;
+
+    console.log(`SAVING QUESTION ${i + 1}/${total}`);
+
+    try {
+      const ensuredUnit = await ensureUnitWithIds(course, unit);
+      if (course?.units?.[item.ui]) {
+        course.units[item.ui] = ensuredUnit;
+      }
+      unit = ensuredUnit;
+
+      const resolvedCourseId = course?.courseId ?? course?.id ?? unit?.courseId ?? question.courseId;
+      const resolvedUnitId = unit?.unitId ?? unit?.id ?? question.unitId;
+
+      if (!resolvedCourseId || !resolvedUnitId) {
+        throw new Error('courseId/unitId missing');
+      }
+
+      question.courseId = resolvedCourseId;
+      question.unitId = resolvedUnitId;
+
+      const payload = buildQuestionPayload(question, {
+        courseId: resolvedCourseId,
+        unitId: resolvedUnitId
+      });
+
+      const path = question.id ? `/api/questions/${question.id}` : '/api/questions';
+      const method = question.id ? 'PUT' : 'POST';
+
+      const response = await fetch(`${API_BASE}${path}`, {
+        method,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const contentType = response.headers.get('content-type') || '';
+      const body = contentType.includes('application/json') ? await response.json() : await response.text();
+
+      if (!response.ok) {
+        const message = typeof body === 'string'
+          ? body
+          : (body?.message || body?.error || `${response.status} ${response.statusText}`);
+        throw new Error(message);
+      }
+
+      const savedId = body?.question?.id ?? body?.id ?? question.id ?? '(unknown)';
+      if (!question.id && (body?.question?.id || body?.id)) {
+        question.id = body?.question?.id ?? body?.id;
+      }
+      console.log(`SAVED QUESTION ID ${savedId}`);
+    } catch (error) {
+      console.error('IMPORT SAVE ERROR', {
+        index: i + 1,
+        total,
+        error: error?.message || String(error),
+        courseTitle: course?.title || '',
+        unitTitle: unit?.title || '',
+        question: question?.question || ''
+      });
+      errors.push({
+        index: i + 1,
+        message: error?.message || String(error),
+        courseTitle: course?.title || '',
+        unitTitle: unit?.title || ''
+      });
+    }
+  }
+
+  console.log('IMPORT SAVE COMPLETE');
+
+  try {
+    await loadData(true);
+    renderAdmin();
+  } catch (error) {
+    console.error(error);
+  }
+
+  saving = false;
+
+  if (errors.length) {
+    alert(`JSON保存完了（一部失敗: ${errors.length}件）。コンソールを確認してください。`);
+    return;
+  }
+
+  alert('JSON保存が完了しました。');
+}
 document.addEventListener("click", async (event) => {
   const target = event.target.closest("[data-act]");
   if (!target) return;
@@ -1155,7 +1265,7 @@ else if (action === "back-units") {
     }
     renderAdmin();
   } else if (action === "save-all") {
-    alert("各問題の保存で反映されます。保存対象の問題を編集画面から保存してください。");
+    await saveAllImportedQuestions();
   } else if (action === "export-json") {
     downloadJson();
   } else if (action === "img-clear") {
