@@ -7,10 +7,17 @@ let questionIndex = 0;
 let saving = false;
 let deleting = false;
 let editingQuestionId = null;
+let dxImportState = {
+  files: [],
+  parsedUnits: [],
+  errors: [],
+  repairLogs: [],
+  previewReady: false
+};
 
 const app = document.getElementById("app");
 
-const TYPES = ["choice", "ox", "multi", "fill", "fill_multi", "image_fill"];
+const TYPES = ["choice", "ox", "multi", "fill", "fill_multi", "image_fill", "combo", "case"];
 
 const TLABEL = {
   choice: "4択",
@@ -18,7 +25,9 @@ const TLABEL = {
   multi: "複数選択",
   fill: "記述",
   fill_multi: "空欄補充",
-  image_fill: "画像穴埋め"
+  image_fill: "画像穴埋め",
+  combo: "組み合わせ",
+  case: "事例"
 };
 
 const CANONICAL_COURSE_TITLE = "介護福祉士実務者研修";
@@ -483,11 +492,25 @@ function renderAdmin() {
       <div class="actions">
         <button data-act="add-q">問題追加</button>
         <button data-act="export-json">JSON出力</button>
+
         <label class="secondary">
           JSON読込
           <input type="file" id="importJson" accept="application/json">
         </label>
       </div>
+
+      <hr>
+      <h4>DXインポート</h4>
+      <div class="actions">
+        <label class="secondary">
+          docx複数/zip
+          <input type="file" id="importDx" accept=".docx,.zip" multiple>
+        </label>
+        <button data-act="dx-run">DXインポート実行</button>
+        <button data-act="dx-preview">プレビュー</button>
+        <button class="danger" data-act="dx-apply">承認して全置換反映</button>
+      </div>
+      <div id="dx-status" class="sub"></div>
     </div>
 
     <div class="card">
@@ -1303,6 +1326,25 @@ else if (action === "back-units") {
     await saveAllImportedQuestions();
   } else if (action === "export-json") {
     downloadJson();
+  } else if (action === "dx-run") {
+    try {
+      await runDxImport();
+      renderDxStatus();
+      alert("DXインポート解析が完了しました。");
+    } catch (error) {
+      alert(`DXインポートエラー: ${error.message}`);
+    }
+  } else if (action === "dx-preview") {
+    if (!dxImportState.previewReady) { alert("先にDXインポートを実行し、エラー0にしてください。"); return; }
+    applyDxPreviewToDb();
+    renderAdmin();
+    renderDxStatus();
+  } else if (action === "dx-apply") {
+    if (!dxImportState.previewReady) { alert("先にDXインポートを実行し、エラー0にしてください。"); return; }
+    if (!confirm("既存問題を全置換して本番反映します。よろしいですか？")) return;
+    applyDxPreviewToDb();
+    await api("/api/init-db");
+    await saveAllImportedQuestions();
   } else if (action === "img-clear") {
     const preview = document.getElementById("img-preview");
     if (preview) preview.innerHTML = "";
@@ -1335,6 +1377,13 @@ document.addEventListener("change", async (event) => {
     } catch (error) {
       alert(`JSON読込エラー: ${error.message}`);
     }
+  } else if (id === "importDx") {
+    dxImportState.files = [...(event.target.files || [])];
+    dxImportState.parsedUnits = [];
+    dxImportState.errors = [];
+    dxImportState.repairLogs = [];
+    dxImportState.previewReady = false;
+    renderDxStatus();
   } else if (id === "eq-blankCount") {
     updateAnswerInputsByBlankCount();
   } else if (id === "eq-image-file") {
@@ -1350,6 +1399,189 @@ document.addEventListener("change", async (event) => {
     reader.readAsDataURL(file);
   }
 });
+
+
+async function extractDocxText(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const result = await mammoth.extractRawText({ arrayBuffer });
+  return String(result.value || "");
+}
+
+function detectType(block) {
+  if (/○|×/.test(block) && /正解/.test(block)) return "ox";
+  if (/複数選択|当てはまるものをすべて/.test(block)) return "multi";
+  if (/穴埋め|（\s*\d+\s*）|\[\s*\]/.test(block)) return "fill_multi";
+  if (/組み合わせ/.test(block)) return "combo";
+  if (/事例/.test(block)) return "case";
+  if (/選択肢|A\.|B\.|1\./.test(block)) return "choice";
+  return "fill";
+}
+
+function parseQuestionBlocks(text) {
+  const lines = text.split(/\r?\n/).map((v) => v.trim()).filter(Boolean);
+  const blocks = [];
+  let cur = [];
+  for (const line of lines) {
+    if (/^(Q|問)\s*\d+/i.test(line) && cur.length) {
+      blocks.push(cur.join("\n"));
+      cur = [line];
+    } else {
+      cur.push(line);
+    }
+  }
+  if (cur.length) blocks.push(cur.join("\n"));
+  return blocks;
+}
+
+function parseBlockToQuestion(block) {
+  const type = detectType(block);
+  const q = normalizeQuestion({ type, question: block, choices: [], answers: [], answer: "" });
+  const choiceMatches = block.match(/(?:^|\n)(?:[A-DＡ-Ｄ1-4１-４][\.\)）]\s*.+)/g) || [];
+  q.choices = choiceMatches.map((v) => v.replace(/^[\s\n]+/, "").trim());
+  const answerLine = (block.split(/\r?\n/).find((l) => /^(正解|解答)[:：]/.test(l)) || "");
+  const ans = answerLine.replace(/^(正解|解答)[:：]/, "").trim();
+  if (type === "multi" || type === "fill_multi" || type === "image_fill") {
+    q.answers = ans ? ans.split(/[、,\n]/).map(norm).filter(Boolean) : [];
+    q.blankCount = Math.max(1, q.answers.length || 1);
+  } else {
+    q.answer = ans;
+  }
+  return q;
+}
+
+async function extractDocxFilesFromUpload(files) {
+  const out = [];
+  for (const f of files) {
+    if (f.name.toLowerCase().endsWith('.docx')) out.push(f);
+    if (f.name.toLowerCase().endsWith('.zip')) {
+      const zip = await JSZip.loadAsync(await f.arrayBuffer());
+      for (const name of Object.keys(zip.files)) {
+        if (name.toLowerCase().endsWith('.docx')) {
+          const blob = await zip.files[name].async('blob');
+          out.push(new File([blob], name.split('/').pop() || name, { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function toCanonicalType(type, q) {
+  if (TYPES.includes(type)) return type;
+  if (type === "single") return "choice";
+  if (type === "boolean") return "ox";
+  if (Array.isArray(q?.answers) && q.answers.length > 1) return "multi";
+  return "fill";
+}
+
+function applyQuestionStructureFix(question, idx) {
+  const fixed = { ...question };
+  fixed.id = fixed.id ?? `dx-${idx + 1}`;
+  fixed.type = toCanonicalType(fixed.type, fixed);
+  fixed.blankCount = Math.max(1, Number(fixed.blankCount) || (Array.isArray(fixed.answers) ? fixed.answers.length : 1));
+
+  if (!Array.isArray(fixed.choices)) fixed.choices = [];
+  if (!Array.isArray(fixed.answers)) {
+    if (fixed.answers == null) fixed.answers = [];
+    else fixed.answers = [String(fixed.answers)];
+  }
+
+  if (fixed.type === "multi" && fixed.answers.length === 0 && typeof fixed.answer === "string" && fixed.answer !== "") {
+    fixed.answers = [fixed.answer];
+  }
+
+  if ((fixed.type === "fill_multi" || fixed.type === "image_fill") && fixed.answers.length === 0 && typeof fixed.answer === "string" && fixed.answer !== "") {
+    fixed.answers = [fixed.answer];
+  }
+
+  return fixed;
+}
+
+function runRepairLoop(parsedUnits) {
+  const logs = [];
+  let units = JSON.parse(JSON.stringify(parsedUnits));
+  for (let i = 1; i <= 10; i += 1) {
+    const errors = [];
+    units.forEach((u, ui) => {
+      if (!u.unitTitle) errors.push(`unit[${ui}] title missing`);
+      if (!Array.isArray(u.questions)) errors.push(`questions array missing ${u.unitTitle || ui}`);
+      (u.questions || []).forEach((q, qi) => {
+        if (!q || typeof q !== "object") errors.push(`q object missing ${u.unitTitle}#${qi + 1}`);
+        if (!q.question) errors.push(`q missing text ${u.unitTitle}#${qi + 1}`);
+      });
+    });
+
+    if (!errors.length) {
+      logs.push(`check#${i}: 0 error`);
+      return { units, errors: [], logs };
+    }
+
+    logs.push(`check#${i}: ${errors.length} error`);
+    units = units.map((u) => ({
+      ...u,
+      unitTitle: normalizeUnitTitle(u.unitTitle || "") || u.unitTitle,
+      questions: Array.isArray(u.questions)
+        ? u.questions.map((q, qi) => applyQuestionStructureFix(q || {}, qi))
+        : []
+    }));
+  }
+
+  const finalErrors = ["最大10回の修復で0エラーに到達できませんでした"];
+  return { units, errors: finalErrors, logs };
+}
+
+function shouldSkipQuestionBySpec(unitTitle, block) {
+  if (normalizeUnitTitle(unitTitle) !== "障害の理解") return false;
+  const m = String(block || "").match(/^(?:Q|問)\s*(\d+)/i);
+  if (!m) return false;
+  const n = Number(m[1]);
+  return n === 1 || n === 8;
+}
+
+async function runDxImport() {
+  if (!dxImportState.files.length) throw new Error('docx/zipファイルを選択してください');
+  const docxFiles = await extractDocxFilesFromUpload(dxImportState.files);
+  const parsedUnits = [];
+  const skipLogs = [];
+  for (const file of docxFiles) {
+    const unitTitleRaw = file.name.replace(/\.docx$/i, '');
+    const unitTitle = normalizeUnitTitle(unitTitleRaw);
+    const text = await extractDocxText(file);
+    const blocks = parseQuestionBlocks(text);
+    const filteredBlocks = blocks.filter((block) => {
+      if (shouldSkipQuestionBySpec(unitTitle, block)) {
+        skipLogs.push(`${file.name}: ${block.split(/\r?\n/)[0]} を仕様スキップ`);
+        return false;
+      }
+      return true;
+    });
+    const questions = filteredBlocks.map(parseBlockToQuestion).map((q, idx) => applyQuestionStructureFix(q, idx));
+    parsedUnits.push({ unitTitle, source: file.name, questions });
+  }
+  const repaired = runRepairLoop(parsedUnits);
+  dxImportState.parsedUnits = repaired.units;
+  dxImportState.errors = repaired.errors;
+  dxImportState.repairLogs = [...skipLogs, ...repaired.logs];
+  dxImportState.previewReady = repaired.errors.length === 0;
+}
+
+function renderDxStatus() {
+  const box = document.getElementById('dx-status');
+  if (!box) return;
+  const unitCount = dxImportState.parsedUnits.length;
+  const qCount = dxImportState.parsedUnits.reduce((a, u) => a + (u.questions||[]).length, 0);
+  box.innerHTML = `取込単元: ${unitCount} / 問題数: ${qCount}<br>${dxImportState.repairLogs.map(esc).join('<br>')}${dxImportState.errors.length ? `<br>ERROR: ${esc(dxImportState.errors.join('; '))}` : ''}`;
+}
+
+function applyDxPreviewToDb() {
+  const course = db.courses[0] || { id:null, courseId:null, title: CANONICAL_COURSE_TITLE, units: [] };
+  course.units = CANONICAL_UNITS.map((title) => {
+    const found = dxImportState.parsedUnits.find((u) => normalizeUnitTitle(u.unitTitle) === title);
+    return { id:null, unitId:null, title, isVisible:true, questions:(found?.questions || []).map((q)=>normalizeQuestion(q, course.courseId??course.id, null)) };
+  });
+  db.courses = [course];
+  courseIndex=0; unitIndex=0;
+}
 
 (async function init() {
   try {
