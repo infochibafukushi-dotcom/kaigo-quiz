@@ -547,6 +547,8 @@ function renderAdmin() {
       <h4>問題一覧：${esc(unit?.title || "")}</h4>
   `;
 
+  console.log("RENDER DX MODE:", dxImportState.mode);
+
   const questions = Array.isArray(unit?.questions) ? unit.questions : [];
 
   if (questions.length === 0) {
@@ -1780,7 +1782,7 @@ function buildExpectedUnitCountsFromCurrentDb() {
   return expected;
 }
 
-function evaluateDxQualityGate(stats, mode = "replace") {
+function evaluateDxQualityGate(stats, mode) {
   const failures = [];
   if (!stats || typeof stats !== "object") {
     return { ok: false, failures: ["stats missing"] };
@@ -1816,7 +1818,10 @@ function evaluateDxQualityGate(stats, mode = "replace") {
 }
 
 async function runDxImport() {
+  console.log("RUN START MODE:", dxImportState.mode);
   const importMode = dxImportState.mode === "append" ? "append" : "replace";
+  dxImportState.mode = importMode;
+  console.log("LOCKED IMPORT MODE:", importMode);
   if (!dxImportState.files.length) throw new Error('docx/zipファイルを選択してください');
   dxImportState.loading = true;
   renderAdmin();
