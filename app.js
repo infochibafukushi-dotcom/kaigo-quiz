@@ -7,10 +7,17 @@ let questionIndex = 0;
 let saving = false;
 let deleting = false;
 let editingQuestionId = null;
+let dxImportState = {
+  files: [],
+  parsedUnits: [],
+  errors: [],
+  repairLogs: [],
+  previewReady: false
+};
 
 const app = document.getElementById("app");
 
-const TYPES = ["choice", "ox", "multi", "fill", "fill_multi", "image_fill"];
+const TYPES = ["choice", "ox", "multi", "fill", "fill_multi", "image_fill", "combo", "case"];
 
 const TLABEL = {
   choice: "4択",
@@ -18,7 +25,9 @@ const TLABEL = {
   multi: "複数選択",
   fill: "記述",
   fill_multi: "空欄補充",
-  image_fill: "画像穴埋め"
+  image_fill: "画像穴埋め",
+  combo: "組み合わせ",
+  case: "事例"
 };
 
 const CANONICAL_COURSE_TITLE = "介護福祉士実務者研修";
@@ -483,11 +492,25 @@ function renderAdmin() {
       <div class="actions">
         <button data-act="add-q">問題追加</button>
         <button data-act="export-json">JSON出力</button>
+
         <label class="secondary">
           JSON読込
           <input type="file" id="importJson" accept="application/json">
         </label>
       </div>
+
+      <hr>
+      <h4>DXインポート</h4>
+      <div class="actions">
+        <label class="secondary">
+          docx複数/zip
+          <input type="file" id="importDx" accept=".docx,.zip" multiple>
+        </label>
+        <button data-act="dx-run">DXインポート実行</button>
+        <button data-act="dx-preview">プレビュー</button>
+        <button class="danger" data-act="dx-apply">承認して全置換反映</button>
+      </div>
+      <div id="dx-status" class="sub"></div>
     </div>
 
     <div class="card">
@@ -1303,6 +1326,25 @@ else if (action === "back-units") {
     await saveAllImportedQuestions();
   } else if (action === "export-json") {
     downloadJson();
+  } else if (action === "dx-run") {
+    try {
+      await runDxImport();
+      renderDxStatus();
+      alert("DXインポート解析が完了しました。");
+    } catch (error) {
+      alert(`DXインポートエラー: ${error.message}`);
+    }
+  } else if (action === "dx-preview") {
+    if (!dxImportState.previewReady) { alert("先にDXインポートを実行し、エラー0にしてください。"); return; }
+    applyDxPreviewToDb();
+    renderAdmin();
+    renderDxStatus();
+  } else if (action === "dx-apply") {
+    if (!dxImportState.previewReady) { alert("先にDXインポートを実行し、エラー0にしてください。"); return; }
+    if (!confirm("既存問題を全置換して本番反映します。よろしいですか？")) return;
+    applyDxPreviewToDb();
+    await api("/api/init-db");
+    await saveAllImportedQuestions();
   } else if (action === "img-clear") {
     const preview = document.getElementById("img-preview");
     if (preview) preview.innerHTML = "";
@@ -1335,6 +1377,13 @@ document.addEventListener("change", async (event) => {
     } catch (error) {
       alert(`JSON読込エラー: ${error.message}`);
     }
+  } else if (id === "importDx") {
+    dxImportState.files = [...(event.target.files || [])];
+    dxImportState.parsedUnits = [];
+    dxImportState.errors = [];
+    dxImportState.repairLogs = [];
+    dxImportState.previewReady = false;
+    renderDxStatus();
   } else if (id === "eq-blankCount") {
     updateAnswerInputsByBlankCount();
   } else if (id === "eq-image-file") {
@@ -1350,6 +1399,263 @@ document.addEventListener("change", async (event) => {
     reader.readAsDataURL(file);
   }
 });
+
+
+async function extractDocxText(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const result = await mammoth.extractRawText({ arrayBuffer });
+  return String(result.value || "");
+}
+
+function splitProblemAndAnswerSections(text) {
+  const lines = String(text || "").split(/\r?\n/);
+  const answerStart = lines.findIndex((line) => /^\s*【\s*答え\s*】\s*$/.test(line) || /^\s*答え\s*$/.test(line));
+  if (answerStart < 0) return { problemText: text, answerText: "" };
+  return {
+    problemText: lines.slice(0, answerStart).join("\n"),
+    answerText: lines.slice(answerStart + 1).join("\n")
+  };
+}
+
+function parseQuestionMap(sectionText) {
+  const lines = String(sectionText || "").split(/\r?\n/);
+  const map = new Map();
+  let currentNo = null;
+  let buffer = [];
+  const flush = () => {
+    if (currentNo == null) return;
+    map.set(currentNo, buffer.join("\n"));
+  };
+  for (const line of lines) {
+    const m = line.match(/^\s*(?:Q|問)\s*(\d+)\s*[\.．:]?\s*(.*)$/i);
+    if (m) {
+      flush();
+      currentNo = Number(m[1]);
+      buffer = [m[2] || ""];
+    } else if (currentNo != null) {
+      buffer.push(line);
+    }
+  }
+  flush();
+  return map;
+}
+
+function extractChoicesFromProblem(problemText) {
+  return String(problemText || "")
+    .split(/\r?\n/)
+    .map((line) => {
+      const m = line.match(/^\s*([1-9１-９A-DＡ-Ｄ])[\)）\.．]\s*(.+)\s*$/);
+      return m ? `${m[1]} ${m[2]}` : null;
+    })
+    .filter(Boolean);
+}
+
+function extractParenTokens(text) {
+  return [...String(text || "").matchAll(/（([^）]+)）/g)].map((m) => String(m[1] || ""));
+}
+
+function extractAnswersByType(problemText, answerText, guessedType) {
+  const parenTokens = extractParenTokens(answerText);
+  if (guessedType === "ox") {
+    const ox = parenTokens.filter((t) => t.includes("〇") || t.includes("○") || t.includes("×"));
+    return { answer: ox[0] || "", answers: ox };
+  }
+  if (guessedType === "multi" || guessedType === "combo" || guessedType === "fill_multi") {
+    const line = String(answerText || "").match(/(?:回答|解答|正解)\s*[:：]\s*（?([^）\n]+)）?/);
+    if (line && (line[1] || "").match(/[|｜、,]/)) {
+      const arr = (line[1] || "").split(/[|｜、,]/).map((v) => String(v));
+      return { answer: "", answers: arr };
+    }
+    if (parenTokens.length > 1) return { answer: "", answers: parenTokens };
+    if (parenTokens.length === 1 && String(parenTokens[0]).match(/[|｜、,]/)) {
+      return { answer: "", answers: String(parenTokens[0]).split(/[|｜、,]/) };
+    }
+    return { answer: "", answers: parenTokens.length ? parenTokens : [] };
+  }
+  if (guessedType === "fill") {
+    const fromAnswerBody = extractParenTokens(answerText);
+    return { answer: fromAnswerBody[0] || "", answers: [] };
+  }
+  if (guessedType === "choice") {
+    const line = String(answerText || "").match(/(?:回答|解答|正解)\s*[:：]\s*（?([^）\n]+)）?/);
+    if (line) return { answer: String(line[1] || ""), answers: [] };
+    return { answer: parenTokens[0] || "", answers: [] };
+  }
+  return { answer: parenTokens[0] || "", answers: parenTokens };
+}
+
+function detectTypeStrict(problemText, answerText, choices) {
+  const p = String(problemText || "");
+  const a = String(answerText || "");
+  if (/事例/.test(p)) return "case";
+  if (/組み合わせ|対応関係|組合せ/.test(p)) return "combo";
+  if (/(?:^|\n)\s*[（(]\s*[〇○×]\s*[)）]/.test(a)) return "ox";
+  if (/回答\s*[:：]\s*（[^）\n]*[|｜][^）\n]*）/.test(a)) return "multi";
+  if (/回答\s*[:：]\s*（[^）\n]*[、,][^）\n]*）/.test(a)) return "multi";
+  const blankHits = (p.match(/（\s*　*\s*）/g) || []).length;
+  if (blankHits >= 2) return "fill_multi";
+  if (blankHits === 1 || /穴埋め|空欄/.test(p)) return "fill";
+  if (choices.length >= 2) return "choice";
+  return "fill";
+}
+
+function buildQuestionFromPair(no, problemText, answerText) {
+  const choices = extractChoicesFromProblem(problemText);
+  const type = detectTypeStrict(problemText, answerText, choices);
+  const extracted = extractAnswersByType(problemText, answerText, type);
+  const question = normalizeQuestion({
+    id: `dx-${no}`,
+    type,
+    question: String(problemText || ""),
+    choices,
+    answer: extracted.answer || "",
+    answers: Array.isArray(extracted.answers) ? extracted.answers : []
+  });
+  if (type === "fill_multi" || type === "image_fill") {
+    question.blankCount = Math.max(1, question.answers.length || 1);
+  }
+  return question;
+}
+
+function buildQuestionsFromDocxText(unitTitle, text) {
+  const { problemText, answerText } = splitProblemAndAnswerSections(text);
+  const problems = parseQuestionMap(problemText);
+  const answers = parseQuestionMap(answerText);
+  const items = [];
+  for (const [no, pText] of problems.entries()) {
+    if (shouldSkipQuestionBySpec(unitTitle, `問${no}`)) continue;
+    items.push(buildQuestionFromPair(no, pText, answers.get(no) || ""));
+  }
+  return items;
+}
+
+async function extractDocxFilesFromUpload(files) {
+  const out = [];
+  for (const f of files) {
+    if (f.name.toLowerCase().endsWith('.docx')) out.push(f);
+    if (f.name.toLowerCase().endsWith('.zip')) {
+      const zip = await JSZip.loadAsync(await f.arrayBuffer());
+      for (const name of Object.keys(zip.files)) {
+        if (name.toLowerCase().endsWith('.docx')) {
+          const blob = await zip.files[name].async('blob');
+          out.push(new File([blob], name.split('/').pop() || name, { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function toCanonicalType(type, q) {
+  if (TYPES.includes(type)) return type;
+  if (type === "single") return "choice";
+  if (type === "boolean") return "ox";
+  if (Array.isArray(q?.answers) && q.answers.length > 1) return "multi";
+  return "fill";
+}
+
+function applyQuestionStructureFix(question, idx) {
+  const fixed = { ...question };
+  fixed.id = fixed.id ?? `dx-${idx + 1}`;
+  fixed.type = toCanonicalType(fixed.type, fixed);
+  fixed.blankCount = Math.max(1, Number(fixed.blankCount) || (Array.isArray(fixed.answers) ? fixed.answers.length : 1));
+
+  if (!Array.isArray(fixed.choices)) fixed.choices = [];
+  if (!Array.isArray(fixed.answers)) {
+    if (fixed.answers == null) fixed.answers = [];
+    else fixed.answers = [String(fixed.answers)];
+  }
+
+  if (fixed.type === "multi" && fixed.answers.length === 0 && typeof fixed.answer === "string" && fixed.answer !== "") {
+    fixed.answers = [fixed.answer];
+  }
+
+  if ((fixed.type === "fill_multi" || fixed.type === "image_fill") && fixed.answers.length === 0 && typeof fixed.answer === "string" && fixed.answer !== "") {
+    fixed.answers = [fixed.answer];
+  }
+
+  return fixed;
+}
+
+function runRepairLoop(parsedUnits) {
+  const logs = [];
+  let units = JSON.parse(JSON.stringify(parsedUnits));
+  for (let i = 1; i <= 10; i += 1) {
+    const errors = [];
+    units.forEach((u, ui) => {
+      if (!u.unitTitle) errors.push(`unit[${ui}] title missing`);
+      if (!Array.isArray(u.questions)) errors.push(`questions array missing ${u.unitTitle || ui}`);
+      (u.questions || []).forEach((q, qi) => {
+        if (!q || typeof q !== "object") errors.push(`q object missing ${u.unitTitle}#${qi + 1}`);
+        if (!q.question) errors.push(`q missing text ${u.unitTitle}#${qi + 1}`);
+      });
+    });
+
+    if (!errors.length) {
+      logs.push(`check#${i}: 0 error`);
+      return { units, errors: [], logs };
+    }
+
+    logs.push(`check#${i}: ${errors.length} error`);
+    units = units.map((u) => ({
+      ...u,
+      unitTitle: normalizeUnitTitle(u.unitTitle || "") || u.unitTitle,
+      questions: Array.isArray(u.questions)
+        ? u.questions.map((q, qi) => applyQuestionStructureFix(q || {}, qi))
+        : []
+    }));
+  }
+
+  const finalErrors = ["最大10回の修復で0エラーに到達できませんでした"];
+  return { units, errors: finalErrors, logs };
+}
+
+function shouldSkipQuestionBySpec(unitTitle, block) {
+  if (normalizeUnitTitle(unitTitle) !== "障害の理解") return false;
+  const m = String(block || "").match(/^(?:Q|問)\s*(\d+)/i);
+  if (!m) return false;
+  const n = Number(m[1]);
+  return n === 1 || n === 8;
+}
+
+async function runDxImport() {
+  if (!dxImportState.files.length) throw new Error('docx/zipファイルを選択してください');
+  const docxFiles = await extractDocxFilesFromUpload(dxImportState.files);
+  const parsedUnits = [];
+  const skipLogs = [];
+  for (const file of docxFiles) {
+    const unitTitleRaw = file.name.replace(/\.docx$/i, '');
+    const unitTitle = normalizeUnitTitle(unitTitleRaw);
+    const text = await extractDocxText(file);
+    const questions = buildQuestionsFromDocxText(unitTitle, text).map((q, idx) => applyQuestionStructureFix(q, idx));
+    const skipped = [1, 8].filter((n) => normalizeUnitTitle(unitTitle) === "障害の理解" && !questions.some((q) => String(q.id) === `dx-${n}`));
+    skipped.forEach((n) => skipLogs.push(`${file.name}: 問${n} を仕様スキップ`));
+    parsedUnits.push({ unitTitle, source: file.name, questions });
+  }
+  const repaired = runRepairLoop(parsedUnits);
+  dxImportState.parsedUnits = repaired.units;
+  dxImportState.errors = repaired.errors;
+  dxImportState.repairLogs = [...skipLogs, ...repaired.logs];
+  dxImportState.previewReady = repaired.errors.length === 0;
+}
+
+function renderDxStatus() {
+  const box = document.getElementById('dx-status');
+  if (!box) return;
+  const unitCount = dxImportState.parsedUnits.length;
+  const qCount = dxImportState.parsedUnits.reduce((a, u) => a + (u.questions||[]).length, 0);
+  box.innerHTML = `取込単元: ${unitCount} / 問題数: ${qCount}<br>${dxImportState.repairLogs.map(esc).join('<br>')}${dxImportState.errors.length ? `<br>ERROR: ${esc(dxImportState.errors.join('; '))}` : ''}`;
+}
+
+function applyDxPreviewToDb() {
+  const course = db.courses[0] || { id:null, courseId:null, title: CANONICAL_COURSE_TITLE, units: [] };
+  course.units = CANONICAL_UNITS.map((title) => {
+    const found = dxImportState.parsedUnits.find((u) => normalizeUnitTitle(u.unitTitle) === title);
+    return { id:null, unitId:null, title, isVisible:true, questions:(found?.questions || []).map((q)=>normalizeQuestion(q, course.courseId??course.id, null)) };
+  });
+  db.courses = [course];
+  courseIndex=0; unitIndex=0;
+}
 
 (async function init() {
   try {
