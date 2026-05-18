@@ -738,7 +738,7 @@ async function callOpenAiJson(env, unitTitle, rawText) {
                     answers: { type: "array", items: { type: "string" } },
                     blankCount: { type: "integer" }
                   },
-                  required: ["type", "question"]
+                  required: ["id", "type", "question", "choices", "answer", "answers", "blankCount"]
                 }
               },
               issues: { type: "array", items: { type: "string" } }
