@@ -1409,13 +1409,8 @@ async function extractDocxText(file) {
 
 function splitProblemAndAnswerSections(text) {
   const lines = String(text || "").split(/\r?\n/);
-  let answerStart = -1;
-  for (let i = 0; i < lines.length; i += 1) {
-    if (/^\s*【?答え】?\s*$/.test(lines[i])) { answerStart = i; break; }
-  }
-  if (answerStart < 0) {
-    return { problemText: text, answerText: "" };
-  }
+  const answerStart = lines.findIndex((line) => /^\s*【\s*答え\s*】\s*$/.test(line) || /^\s*答え\s*$/.test(line));
+  if (answerStart < 0) return { problemText: text, answerText: "" };
   return {
     problemText: lines.slice(0, answerStart).join("\n"),
     answerText: lines.slice(answerStart + 1).join("\n")
@@ -1427,14 +1422,11 @@ function parseQuestionMap(sectionText) {
   const map = new Map();
   let currentNo = null;
   let buffer = [];
-
-  function flush() {
+  const flush = () => {
     if (currentNo == null) return;
-    map.set(currentNo, buffer.join("\n").trim());
-  }
-
-  for (const raw of lines) {
-    const line = String(raw || "");
+    map.set(currentNo, buffer.join("\n"));
+  };
+  for (const line of lines) {
     const m = line.match(/^\s*(?:Q|問)\s*(\d+)\s*[\.．:]?\s*(.*)$/i);
     if (m) {
       flush();
@@ -1448,85 +1440,93 @@ function parseQuestionMap(sectionText) {
   return map;
 }
 
-function extractChoices(problemText) {
-  const lines = String(problemText || "").split(/\r?\n/);
-  return lines
+function extractChoicesFromProblem(problemText) {
+  return String(problemText || "")
+    .split(/\r?\n/)
     .map((line) => {
-      const m = line.match(/^\s*([A-DＡ-Ｄ]|[1-9１-９])[\)）\.．]\s*(.+)$/);
+      const m = line.match(/^\s*([1-9１-９A-DＡ-Ｄ])[\)）\.．]\s*(.+)\s*$/);
       return m ? `${m[1]} ${m[2]}` : null;
     })
     .filter(Boolean);
 }
 
-function extractAnswersFromText(answerText) {
-  const answers = [];
-  const paren = [...String(answerText || "").matchAll(/（([^）]+)）/g)].map((m) => (m[1] || "").trim());
-  if (paren.length) return paren;
-
-  const line = String(answerText || "").match(/(?:回答|解答|正解)\s*[:：]\s*(.+)/);
-  if (line) {
-    const raw = line[1] || "";
-    if (raw.includes("|") || raw.includes("｜")) {
-      return raw.split(/[|｜]/).map((v) => v.trim()).filter((v) => v !== "");
-    }
-    if (raw.includes("、") || raw.includes(",")) {
-      return raw.split(/[、,]/).map((v) => v.trim()).filter((v) => v !== "");
-    }
-    return [raw.trim()].filter(Boolean);
-  }
-
-  return answers;
+function extractParenTokens(text) {
+  return [...String(text || "").matchAll(/（([^）]+)）/g)].map((m) => String(m[1] || ""));
 }
 
-function detectTypeFromPair(problemText, answerText, choices, answers) {
-  if (/事例/.test(problemText)) return "case";
-  if (/組み合わせ|対応/.test(problemText)) return "combo";
-  if (answers.some((a) => a === "〇" || a === "○" || a === "×")) return "ox";
-  if ((/穴埋め|空欄/.test(problemText) || /（\s*　+\s*）/.test(problemText) || /\(\s*\)/.test(problemText)) && answers.length > 1) return "fill_multi";
-  if ((/穴埋め|空欄/.test(problemText) || /（\s*　+\s*）/.test(problemText) || /\(\s*\)/.test(problemText)) && answers.length <= 1) return "fill";
-  if (choices.length >= 2 && answers.length > 1) return "multi";
+function extractAnswersByType(problemText, answerText, guessedType) {
+  const parenTokens = extractParenTokens(answerText);
+  if (guessedType === "ox") {
+    const ox = parenTokens.filter((t) => t.includes("〇") || t.includes("○") || t.includes("×"));
+    return { answer: ox[0] || "", answers: ox };
+  }
+  if (guessedType === "multi" || guessedType === "combo" || guessedType === "fill_multi") {
+    const line = String(answerText || "").match(/(?:回答|解答|正解)\s*[:：]\s*（?([^）\n]+)）?/);
+    if (line && (line[1] || "").match(/[|｜、,]/)) {
+      const arr = (line[1] || "").split(/[|｜、,]/).map((v) => String(v));
+      return { answer: "", answers: arr };
+    }
+    if (parenTokens.length > 1) return { answer: "", answers: parenTokens };
+    if (parenTokens.length === 1 && String(parenTokens[0]).match(/[|｜、,]/)) {
+      return { answer: "", answers: String(parenTokens[0]).split(/[|｜、,]/) };
+    }
+    return { answer: "", answers: parenTokens.length ? parenTokens : [] };
+  }
+  if (guessedType === "fill") {
+    const fromAnswerBody = extractParenTokens(answerText);
+    return { answer: fromAnswerBody[0] || "", answers: [] };
+  }
+  if (guessedType === "choice") {
+    const line = String(answerText || "").match(/(?:回答|解答|正解)\s*[:：]\s*（?([^）\n]+)）?/);
+    if (line) return { answer: String(line[1] || ""), answers: [] };
+    return { answer: parenTokens[0] || "", answers: [] };
+  }
+  return { answer: parenTokens[0] || "", answers: parenTokens };
+}
+
+function detectTypeStrict(problemText, answerText, choices) {
+  const p = String(problemText || "");
+  const a = String(answerText || "");
+  if (/事例/.test(p)) return "case";
+  if (/組み合わせ|対応関係|組合せ/.test(p)) return "combo";
+  if (/(?:^|\n)\s*[（(]\s*[〇○×]\s*[)）]/.test(a)) return "ox";
+  if (/回答\s*[:：]\s*（[^）\n]*[|｜][^）\n]*）/.test(a)) return "multi";
+  if (/回答\s*[:：]\s*（[^）\n]*[、,][^）\n]*）/.test(a)) return "multi";
+  const blankHits = (p.match(/（\s*　*\s*）/g) || []).length;
+  if (blankHits >= 2) return "fill_multi";
+  if (blankHits === 1 || /穴埋め|空欄/.test(p)) return "fill";
   if (choices.length >= 2) return "choice";
   return "fill";
 }
 
 function buildQuestionFromPair(no, problemText, answerText) {
-  const choices = extractChoices(problemText);
-  const answers = extractAnswersFromText(answerText);
-  const type = detectTypeFromPair(problemText, answerText, choices, answers);
+  const choices = extractChoicesFromProblem(problemText);
+  const type = detectTypeStrict(problemText, answerText, choices);
+  const extracted = extractAnswersByType(problemText, answerText, type);
   const question = normalizeQuestion({
+    id: `dx-${no}`,
     type,
-    question: String(problemText || "").trim(),
+    question: String(problemText || ""),
     choices,
-    answer: "",
-    answers: []
+    answer: extracted.answer || "",
+    answers: Array.isArray(extracted.answers) ? extracted.answers : []
   });
-
-  if (type === "multi" || type === "fill_multi" || type === "image_fill" || type === "combo") {
-    question.answers = answers.slice();
+  if (type === "fill_multi" || type === "image_fill") {
     question.blankCount = Math.max(1, question.answers.length || 1);
-  } else {
-    question.answer = answers[0] || "";
   }
-
-  question.id = question.id ?? `dx-${no}`;
   return question;
 }
 
 function buildQuestionsFromDocxText(unitTitle, text) {
   const { problemText, answerText } = splitProblemAndAnswerSections(text);
-  const problemMap = parseQuestionMap(problemText);
-  const answerMap = parseQuestionMap(answerText);
-  const questions = [];
-
-  for (const [no, pText] of problemMap.entries()) {
-    const pseudoBlock = `問${no}
-${pText}`;
-    if (shouldSkipQuestionBySpec(unitTitle, pseudoBlock)) continue;
-    const aText = answerMap.get(no) || "";
-    questions.push(buildQuestionFromPair(no, pText, aText));
+  const problems = parseQuestionMap(problemText);
+  const answers = parseQuestionMap(answerText);
+  const items = [];
+  for (const [no, pText] of problems.entries()) {
+    if (shouldSkipQuestionBySpec(unitTitle, `問${no}`)) continue;
+    items.push(buildQuestionFromPair(no, pText, answers.get(no) || ""));
   }
-
-  return questions;
+  return items;
 }
 
 async function extractDocxFilesFromUpload(files) {
