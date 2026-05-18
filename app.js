@@ -1787,6 +1787,8 @@ function evaluateDxQualityGate(stats, mode = "replace") {
   }
 
   const normalizedMode = mode === "append" ? "append" : "replace";
+  console.log("DX QUALITY GATE MODE:", mode);
+  console.log("DX QUALITY GATE NORMALIZED:", normalizedMode);
 
   if (normalizedMode === "append") {
     if (Number(stats.answerMissing) !== 0) failures.push(`answer欠落NG(${stats.answerMissing})`);
@@ -1797,9 +1799,10 @@ function evaluateDxQualityGate(stats, mode = "replace") {
     return { ok: failures.length === 0, failures };
   }
 
+  console.log("REPLACE GATE ENTERED");
   if (Number(stats.unitCountMismatch) !== 0) failures.push(`unitCount不一致NG(${stats.unitCountMismatch})`);
   if (Number(stats.questionAnswerLeak) !== 0) failures.push(`question答え混入NG(${stats.questionAnswerLeak})`);
-  if (Number(stats.totalUnits) !== 11) failures.push(`11単元完走NG(${stats.totalUnits || 0}/11)`);
+  if (Number(stats.unitCount) !== 11) failures.push(`11単元完走NG(${stats.unitCount || 0}/11)`);
 
   const requiredTypes = ["ox", "choice", "multi", "fill", "fill_multi", "combo", "case"];
   requiredTypes.forEach((type) => {
@@ -1859,9 +1862,10 @@ async function runDxImport() {
       return acc + ((expected > 0 && actual !== expected) ? 1 : 0);
     }, 0);
     dxImportState.stats.workerIssues = workerIssues;
-    dxImportState.stats.totalUnits = timings.length;
+    dxImportState.stats.unitCount = timings.length;
     dxImportState.stats.totalSeconds = timings.reduce((a, t) => a + t.ms, 0) / 1000;
     dxImportState.stats.avgSecondsPerUnit = timings.length ? (dxImportState.stats.totalSeconds / timings.length) : 0;
+    console.log("DX IMPORT MODE:", importMode);
     const gate = evaluateDxQualityGate(dxImportState.stats, importMode);
     if (!gate.ok) {
       dxImportState.errors = [...dxImportState.errors, ...gate.failures];
@@ -1882,9 +1886,10 @@ function renderDxStatus() {
   const stats = dxImportState.stats;
   const typeText = stats ? Object.entries(stats.typeCounts).map(([k, v]) => `${k}:${v}`).join(", ") : "";
   const importMode = dxImportState.mode === "append" ? "append" : "replace";
+  console.log("DX STATUS MODE:", importMode);
   const gate = stats ? evaluateDxQualityGate(stats, importMode) : { ok: false, failures: ["stats missing"] };
   const metrics = stats
-    ? `<br>type別件数: ${esc(typeText)}<br>answer欠落件数: ${stats.answerMissing}<br>choices欠落件数: ${stats.choicesMissing}<br>blankCount不整合件数: ${stats.blankCountMismatch}<br>questionへの答え混入検知件数: ${stats.questionAnswerLeak}<br>worker issues件数: ${stats.workerIssues}<br>unitCount不一致件数: ${stats.unitCountMismatch}<br>11単元完走: ${stats.totalUnits === 11 ? "OK" : "NG"} (${stats.totalUnits || 0}/11)<br>1単元平均秒数: ${(Number(stats.avgSecondsPerUnit) || 0).toFixed(2)}秒<br>品質ゲート: ${gate.ok ? "OK" : "NG"}${gate.ok ? "" : `<br>ゲート失敗: ${esc(gate.failures.join(' / '))}`}<br>障害の理解 問1/問8 スキップ確認: ${stats.skippedShogai.q1 ? "OK" : "NG"}/${stats.skippedShogai.q8 ? "OK" : "NG"}`
+    ? `<br>type別件数: ${esc(typeText)}<br>answer欠落件数: ${stats.answerMissing}<br>choices欠落件数: ${stats.choicesMissing}<br>blankCount不整合件数: ${stats.blankCountMismatch}<br>questionへの答え混入検知件数: ${stats.questionAnswerLeak}<br>worker issues件数: ${stats.workerIssues}<br>unitCount不一致件数: ${stats.unitCountMismatch}<br>11単元完走: ${stats.unitCount === 11 ? "OK" : "NG"} (${stats.unitCount || 0}/11)<br>1単元平均秒数: ${(Number(stats.avgSecondsPerUnit) || 0).toFixed(2)}秒<br>品質ゲート: ${gate.ok ? "OK" : "NG"}${gate.ok ? "" : `<br>ゲート失敗: ${esc(gate.failures.join(' / '))}`}<br>障害の理解 問1/問8 スキップ確認: ${stats.skippedShogai.q1 ? "OK" : "NG"}/${stats.skippedShogai.q8 ? "OK" : "NG"}`
     : "";
   const loadingText = dxImportState.loading
     ? `AI解析中...<br>${esc(dxImportState.currentFileName)} を解析中...<br>${dxImportState.progressCurrent} / ${dxImportState.progressTotal} ファイル<br>`
