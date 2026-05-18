@@ -13,7 +13,14 @@ let dxImportState = {
   errors: [],
   repairLogs: [],
   previewReady: false,
-  stats: null
+  stats: null,
+  loading: false,
+  completed: false,
+  mode: "replace",
+  currentFileName: "",
+  progressCurrent: 0,
+  progressTotal: 0,
+  resultMessage: ""
 };
 
 const app = document.getElementById("app");
@@ -516,13 +523,22 @@ function renderAdmin() {
       <hr>
       <h4>DXインポート</h4>
       <div class="actions">
+        <label>
+          反映モード
+          <select id="dx-mode">
+            <option value="replace" ${dxImportState.mode === "replace" ? "selected" : ""}>全置換反映</option>
+            <option value="append" ${dxImportState.mode === "append" ? "selected" : ""}>追加反映（append）</option>
+          </select>
+        </label>
+      </div>
+      <div class="actions">
         <label class="secondary">
           docx複数/zip
           <input type="file" id="importDx" accept=".docx,.zip" multiple>
         </label>
-        <button data-act="dx-run">DXインポート実行</button>
-        <button data-act="dx-preview">プレビュー</button>
-        <button class="danger" data-act="dx-apply">承認して全置換反映</button>
+        <button data-act="dx-run" ${dxImportState.loading ? "disabled" : ""}>DXインポート実行</button>
+        <button data-act="dx-preview" ${dxImportState.loading ? "disabled" : ""}>プレビュー</button>
+        <button class="danger" data-act="dx-apply" ${dxImportState.loading ? "disabled" : ""}>承認して反映</button>
       </div>
       <div id="dx-status" class="sub"></div>
     </div>
@@ -1341,11 +1357,18 @@ else if (action === "back-units") {
   } else if (action === "export-json") {
     downloadJson();
   } else if (action === "dx-run") {
+    if (dxImportState.loading) return;
     try {
+      dxImportState.completed = false;
+      dxImportState.resultMessage = "";
       await runDxImport();
+      dxImportState.completed = true;
+      dxImportState.resultMessage = "DXインポート解析が完了しました。";
       renderDxStatus();
-      alert("DXインポート解析が完了しました。");
     } catch (error) {
+      dxImportState.completed = true;
+      dxImportState.resultMessage = `DXインポートエラー: ${error.message}`;
+      renderDxStatus();
       alert(`DXインポートエラー: ${error.message}`);
     }
   } else if (action === "dx-preview") {
@@ -1354,11 +1377,20 @@ else if (action === "back-units") {
     renderAdmin();
     renderDxStatus();
   } else if (action === "dx-apply") {
+    if (dxImportState.loading) return;
     if (!dxImportState.previewReady) { alert("先にDXインポートを実行し、エラー0にしてください。"); return; }
-    if (!confirm("既存問題を全置換して本番反映します。よろしいですか？")) return;
-    applyDxPreviewToDb();
-    await api("/api/init-db");
-    await saveAllImportedQuestions();
+    const isReplaceMode = dxImportState.mode === "replace";
+    if (!confirm(isReplaceMode
+      ? "既存問題を全置換して本番反映します。よろしいですか？"
+      : "既存データを残したまま追加反映します。よろしいですか？")) return;
+    if (isReplaceMode) {
+      applyDxPreviewToDb();
+      await api("/api/init-db?mode=replace");
+      await saveAllImportedQuestions();
+    } else {
+      await appendDxPreviewToDb();
+      await saveAllImportedQuestions();
+    }
   } else if (action === "img-clear") {
     const preview = document.getElementById("img-preview");
     if (preview) preview.innerHTML = "";
@@ -1398,6 +1430,14 @@ document.addEventListener("change", async (event) => {
     dxImportState.repairLogs = [];
     dxImportState.previewReady = false;
     dxImportState.stats = null;
+    dxImportState.completed = false;
+    dxImportState.resultMessage = "";
+    dxImportState.currentFileName = "";
+    dxImportState.progressCurrent = 0;
+    dxImportState.progressTotal = 0;
+    renderAdmin();
+  } else if (id === "dx-mode") {
+    dxImportState.mode = event.target.value === "append" ? "append" : "replace";
     renderDxStatus();
   } else if (id === "eq-blankCount") {
     updateAnswerInputsByBlankCount();
@@ -1724,74 +1764,89 @@ function buildExpectedUnitCountsFromCurrentDb() {
   return expected;
 }
 
-function evaluateDxQualityGate(stats) {
+function evaluateDxQualityGate(stats, mode = "replace") {
   const failures = [];
   if (!stats || typeof stats !== "object") {
     return { ok: false, failures: ["stats missing"] };
   }
 
-  if (Number(stats.unitCountMismatch) !== 0) failures.push(`unitCount不一致NG(${stats.unitCountMismatch})`);
+  if (mode === "replace" && Number(stats.unitCountMismatch) !== 0) failures.push(`unitCount不一致NG(${stats.unitCountMismatch})`);
   if (Number(stats.answerMissing) !== 0) failures.push(`answer欠落NG(${stats.answerMissing})`);
   if (Number(stats.choicesMissing) !== 0) failures.push(`choices欠落NG(${stats.choicesMissing})`);
   if (Number(stats.blankCountMismatch) !== 0) failures.push(`blankCount不整合NG(${stats.blankCountMismatch})`);
   if (Number(stats.questionAnswerLeak) !== 0) failures.push(`question答え混入NG(${stats.questionAnswerLeak})`);
   if (Number(stats.workerIssues) !== 0) failures.push(`worker issues NG(${stats.workerIssues})`);
 
-  const requiredTypes = ["ox", "choice", "multi", "fill", "fill_multi", "combo", "case"];
-  requiredTypes.forEach((type) => {
-    const count = Number(stats.typeCounts?.[type] || 0);
-    if (count <= 0) failures.push(`type=${type} 0件`);
-  });
+  if (mode === "replace") {
+    const requiredTypes = ["ox", "choice", "multi", "fill", "fill_multi", "combo", "case"];
+    requiredTypes.forEach((type) => {
+      const count = Number(stats.typeCounts?.[type] || 0);
+      if (count <= 0) failures.push(`type=${type} 0件`);
+    });
+  }
 
   return { ok: failures.length === 0, failures };
 }
 
 async function runDxImport() {
   if (!dxImportState.files.length) throw new Error('docx/zipファイルを選択してください');
-  const docxFiles = await extractDocxFilesFromUpload(dxImportState.files);
-  const parsedUnits = [];
-  const timings = [];
-  let workerIssues = 0;
-  const skipLogs = [];
-  const skipFlags = { q1: false, q8: false };
-  for await (const file of docxFiles) {
-    const startedAt = Date.now();
-    const unitTitleRaw = file.name.replace(/\.docx$/i, '');
-    const unitTitle = normalizeUnitTitle(unitTitleRaw);
-    const text = await extractDocxText(file);
-    const parsed = await parseQuestionsViaWorker(unitTitle, file.name, text);
-    workerIssues += Array.isArray(parsed.issues) ? parsed.issues.length : 0;
-    const questions = (Array.isArray(parsed.questions) ? parsed.questions : []).map((q, idx) => applyQuestionStructureFix(q, idx));
-    timings.push({ unitTitle, ms: Date.now() - startedAt });
-    const skipped = [1, 8].filter((n) => normalizeUnitTitle(unitTitle) === "障害の理解" && !questions.some((q) => String(q.id) === `dx-${n}`));
-    skipped.forEach((n) => {
-      skipLogs.push(`${file.name}: 問${n} を仕様スキップ`);
-      if (n === 1) skipFlags.q1 = true;
-      if (n === 8) skipFlags.q8 = true;
-    });
-    parsedUnits.push({ unitTitle, source: file.name, questions });
+  dxImportState.loading = true;
+  renderAdmin();
+  try {
+    const docxFiles = await extractDocxFilesFromUpload(dxImportState.files);
+    const parsedUnits = [];
+    const timings = [];
+    let workerIssues = 0;
+    const skipLogs = [];
+    const skipFlags = { q1: false, q8: false };
+    dxImportState.progressTotal = docxFiles.length;
+    for (let index = 0; index < docxFiles.length; index += 1) {
+      const file = docxFiles[index];
+      dxImportState.currentFileName = file.name;
+      dxImportState.progressCurrent = index + 1;
+      renderDxStatus();
+      const startedAt = Date.now();
+      const unitTitleRaw = file.name.replace(/\.docx$/i, '');
+      const unitTitle = normalizeUnitTitle(unitTitleRaw);
+      const text = await extractDocxText(file);
+      const parsed = await parseQuestionsViaWorker(unitTitle, file.name, text);
+      workerIssues += Array.isArray(parsed.issues) ? parsed.issues.length : 0;
+      const questions = (Array.isArray(parsed.questions) ? parsed.questions : []).map((q, idx) => applyQuestionStructureFix(q, idx));
+      timings.push({ unitTitle, ms: Date.now() - startedAt });
+      const skipped = [1, 8].filter((n) => normalizeUnitTitle(unitTitle) === "障害の理解" && !questions.some((q) => String(q.id) === `dx-${n}`));
+      skipped.forEach((n) => {
+        skipLogs.push(`${file.name}: 問${n} を仕様スキップ`);
+        if (n === 1) skipFlags.q1 = true;
+        if (n === 8) skipFlags.q8 = true;
+      });
+      parsedUnits.push({ unitTitle, source: file.name, questions });
+    }
+    const repaired = runRepairLoop(parsedUnits);
+    dxImportState.parsedUnits = repaired.units;
+    dxImportState.errors = repaired.errors;
+    dxImportState.repairLogs = [...skipLogs, ...repaired.logs];
+    dxImportState.stats = buildDxStats(repaired.units, skipFlags);
+    const expectedCounts = buildExpectedUnitCountsFromCurrentDb();
+    dxImportState.stats.expectedUnitCounts = expectedCounts;
+    dxImportState.stats.unitCountMismatch = Object.keys(expectedCounts).reduce((acc, title) => {
+      const expected = Number(expectedCounts[title] || 0);
+      const actual = Number(dxImportState.stats.actualUnitCounts[title] || 0);
+      return acc + ((expected > 0 && actual !== expected) ? 1 : 0);
+    }, 0);
+    dxImportState.stats.workerIssues = workerIssues;
+    dxImportState.stats.totalUnits = timings.length;
+    dxImportState.stats.totalSeconds = timings.reduce((a, t) => a + t.ms, 0) / 1000;
+    dxImportState.stats.avgSecondsPerUnit = timings.length ? (dxImportState.stats.totalSeconds / timings.length) : 0;
+    const gate = evaluateDxQualityGate(dxImportState.stats, dxImportState.mode);
+    if (!gate.ok) {
+      dxImportState.errors = [...dxImportState.errors, ...gate.failures];
+    }
+    dxImportState.previewReady = dxImportState.errors.length === 0;
+  } finally {
+    dxImportState.loading = false;
+    dxImportState.currentFileName = "";
+    renderAdmin();
   }
-  const repaired = runRepairLoop(parsedUnits);
-  dxImportState.parsedUnits = repaired.units;
-  dxImportState.errors = repaired.errors;
-  dxImportState.repairLogs = [...skipLogs, ...repaired.logs];
-  dxImportState.stats = buildDxStats(repaired.units, skipFlags);
-  const expectedCounts = buildExpectedUnitCountsFromCurrentDb();
-  dxImportState.stats.expectedUnitCounts = expectedCounts;
-  dxImportState.stats.unitCountMismatch = Object.keys(expectedCounts).reduce((acc, title) => {
-    const expected = Number(expectedCounts[title] || 0);
-    const actual = Number(dxImportState.stats.actualUnitCounts[title] || 0);
-    return acc + ((expected > 0 && actual !== expected) ? 1 : 0);
-  }, 0);
-  dxImportState.stats.workerIssues = workerIssues;
-  dxImportState.stats.totalUnits = timings.length;
-  dxImportState.stats.totalSeconds = timings.reduce((a, t) => a + t.ms, 0) / 1000;
-  dxImportState.stats.avgSecondsPerUnit = timings.length ? (dxImportState.stats.totalSeconds / timings.length) : 0;
-  const gate = evaluateDxQualityGate(dxImportState.stats);
-  if (!gate.ok) {
-    dxImportState.errors = [...dxImportState.errors, ...gate.failures];
-  }
-  dxImportState.previewReady = dxImportState.errors.length === 0;
 }
 
 function renderDxStatus() {
@@ -1801,11 +1856,17 @@ function renderDxStatus() {
   const qCount = dxImportState.parsedUnits.reduce((a, u) => a + (u.questions||[]).length, 0);
   const st = dxImportState.stats;
   const typeText = st ? Object.entries(st.typeCounts).map(([k, v]) => `${k}:${v}`).join(", ") : "";
-  const gate = st ? evaluateDxQualityGate(st) : { ok: false, failures: ["stats missing"] };
+  const gate = st ? evaluateDxQualityGate(st, dxImportState.mode) : { ok: false, failures: ["stats missing"] };
   const metrics = st
     ? `<br>type別件数: ${esc(typeText)}<br>answer欠落件数: ${st.answerMissing}<br>choices欠落件数: ${st.choicesMissing}<br>blankCount不整合件数: ${st.blankCountMismatch}<br>questionへの答え混入検知件数: ${st.questionAnswerLeak}<br>worker issues件数: ${st.workerIssues}<br>unitCount不一致件数: ${st.unitCountMismatch}<br>11単元完走: ${st.totalUnits === 11 ? "OK" : "NG"} (${st.totalUnits || 0}/11)<br>1単元平均秒数: ${(Number(st.avgSecondsPerUnit) || 0).toFixed(2)}秒<br>品質ゲート: ${gate.ok ? "OK" : "NG"}${gate.ok ? "" : `<br>ゲート失敗: ${esc(gate.failures.join(' / '))}`}<br>障害の理解 問1/問8 スキップ確認: ${st.skippedShogai.q1 ? "OK" : "NG"}/${st.skippedShogai.q8 ? "OK" : "NG"}`
     : "";
-  box.innerHTML = `取込単元: ${unitCount} / 問題数: ${qCount}${metrics}<br>${dxImportState.repairLogs.map(esc).join('<br>')}${dxImportState.errors.length ? `<br>ERROR: ${esc(dxImportState.errors.join('; '))}` : ''}`;
+  const loadingText = dxImportState.loading
+    ? `AI解析中...<br>${esc(dxImportState.currentFileName)} を解析中...<br>${dxImportState.progressCurrent} / ${dxImportState.progressTotal} ファイル<br>`
+    : "";
+  const resultText = dxImportState.completed && dxImportState.resultMessage
+    ? `${esc(dxImportState.resultMessage)}<br>`
+    : "";
+  box.innerHTML = `${loadingText}${resultText}取込単元: ${unitCount} / 問題数: ${qCount}${metrics}<br>${dxImportState.repairLogs.map(esc).join('<br>')}${dxImportState.errors.length ? `<br>ERROR: ${esc(dxImportState.errors.join('; '))}` : ''}`;
 }
 
 function applyDxPreviewToDb() {
@@ -1816,6 +1877,41 @@ function applyDxPreviewToDb() {
   });
   db.courses = [course];
   courseIndex=0; unitIndex=0;
+}
+
+function questionSignature(question) {
+  const answers = Array.isArray(question.answers) ? question.answers.map((v) => norm(v)).sort().join("|") : "";
+  return [
+    norm(question.type),
+    norm(question.question),
+    norm(question.answer),
+    answers
+  ].join("::");
+}
+
+async function appendDxPreviewToDb() {
+  await loadData(true);
+  const course = db.courses[0] || { id: null, courseId: null, title: CANONICAL_COURSE_TITLE, units: [] };
+  if (!db.courses[0]) db.courses[0] = course;
+  for (const parsedUnit of dxImportState.parsedUnits) {
+    const unitTitle = normalizeUnitTitle(parsedUnit.unitTitle);
+    let unit = (course.units || []).find((u) => normalizeUnitTitle(u.title) === unitTitle);
+    if (!unit) {
+      unit = { id: null, unitId: null, title: unitTitle, isVisible: true, questions: [] };
+      course.units.push(unit);
+    }
+    const existingSet = new Set((unit.questions || []).map((q) => questionSignature(q)));
+    const toAppend = [];
+    for (const question of (parsedUnit.questions || [])) {
+      const normalizedQuestion = normalizeQuestion(question, course.courseId ?? course.id, unit.unitId ?? unit.id);
+      const signature = questionSignature(normalizedQuestion);
+      if (existingSet.has(signature)) continue;
+      existingSet.add(signature);
+      toAppend.push(normalizedQuestion);
+    }
+    unit.questions = [...(unit.questions || []), ...toAppend];
+  }
+  course.units = sortUnitsByCanonicalOrder(course.units || []);
 }
 
 (async function init() {
