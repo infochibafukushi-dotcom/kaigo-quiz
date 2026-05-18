@@ -1879,12 +1879,12 @@ function renderDxStatus() {
   if (!box) return;
   const unitCount = dxImportState.parsedUnits.length;
   const qCount = dxImportState.parsedUnits.reduce((a, u) => a + (u.questions||[]).length, 0);
-  const st = dxImportState.stats;
-  const typeText = st ? Object.entries(st.typeCounts).map(([k, v]) => `${k}:${v}`).join(", ") : "";
+  const stats = dxImportState.stats;
+  const typeText = stats ? Object.entries(stats.typeCounts).map(([k, v]) => `${k}:${v}`).join(", ") : "";
   const importMode = dxImportState.mode === "append" ? "append" : "replace";
-  const gate = st ? evaluateDxQualityGate(st, importMode) : { ok: false, failures: ["stats missing"] };
-  const metrics = st
-    ? `<br>type別件数: ${esc(typeText)}<br>answer欠落件数: ${st.answerMissing}<br>choices欠落件数: ${st.choicesMissing}<br>blankCount不整合件数: ${st.blankCountMismatch}<br>questionへの答え混入検知件数: ${st.questionAnswerLeak}<br>worker issues件数: ${st.workerIssues}<br>unitCount不一致件数: ${st.unitCountMismatch}<br>11単元完走: ${st.totalUnits === 11 ? "OK" : "NG"} (${st.totalUnits || 0}/11)<br>1単元平均秒数: ${(Number(st.avgSecondsPerUnit) || 0).toFixed(2)}秒<br>品質ゲート: ${gate.ok ? "OK" : "NG"}${gate.ok ? "" : `<br>ゲート失敗: ${esc(gate.failures.join(' / '))}`}<br>障害の理解 問1/問8 スキップ確認: ${st.skippedShogai.q1 ? "OK" : "NG"}/${st.skippedShogai.q8 ? "OK" : "NG"}`
+  const gate = stats ? evaluateDxQualityGate(stats, importMode) : { ok: false, failures: ["stats missing"] };
+  const metrics = stats
+    ? `<br>type別件数: ${esc(typeText)}<br>answer欠落件数: ${stats.answerMissing}<br>choices欠落件数: ${stats.choicesMissing}<br>blankCount不整合件数: ${stats.blankCountMismatch}<br>questionへの答え混入検知件数: ${stats.questionAnswerLeak}<br>worker issues件数: ${stats.workerIssues}<br>unitCount不一致件数: ${stats.unitCountMismatch}<br>11単元完走: ${stats.totalUnits === 11 ? "OK" : "NG"} (${stats.totalUnits || 0}/11)<br>1単元平均秒数: ${(Number(stats.avgSecondsPerUnit) || 0).toFixed(2)}秒<br>品質ゲート: ${gate.ok ? "OK" : "NG"}${gate.ok ? "" : `<br>ゲート失敗: ${esc(gate.failures.join(' / '))}`}<br>障害の理解 問1/問8 スキップ確認: ${stats.skippedShogai.q1 ? "OK" : "NG"}/${stats.skippedShogai.q8 ? "OK" : "NG"}`
     : "";
   const loadingText = dxImportState.loading
     ? `AI解析中...<br>${esc(dxImportState.currentFileName)} を解析中...<br>${dxImportState.progressCurrent} / ${dxImportState.progressTotal} ファイル<br>`
