@@ -106,6 +106,12 @@ export default {
         return json({ ok: true, unit }, 200, corsHeaders);
       }
 
+      if (pathname === "/api/ai-parse" && request.method === "POST") {
+        const body = await safeJson(request);
+        const parsed = await handleAiParse(env, body);
+        return json(parsed, 200, corsHeaders);
+      }
+
       const unitMatch = pathname.match(/^\/api\/units\/(\d+)$/);
       if (unitMatch && request.method === "PATCH") {
         await ensureSchema(env);
@@ -148,6 +154,9 @@ function normalizePath(pathname) {
 function validateEnv(env) {
   if (!env.DB) {
     throw new Error("Missing D1 binding: DB");
+  }
+  if (!env.OPENAI_API_KEY) {
+    throw new Error("Missing secret: OPENAI_API_KEY");
   }
 }
 
@@ -644,4 +653,129 @@ function encodeId(value) {
   } catch {
     return String(value).replace(/[^\w-]+/g, "_");
   }
+}
+
+const ALLOWED_TYPES = new Set(["choice", "ox", "multi", "fill", "fill_multi", "combo", "case"]);
+
+function normalizeForAudit(value) {
+  return String(value ?? "")
+    .replace(/\r/g, "\n")
+    .replace(/[ \t　]+/g, " ")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+}
+
+function collectMutationIssues(rawText, questions) {
+  const issues = [];
+  const hay = normalizeForAudit(rawText);
+  (questions || []).forEach((q, qi) => {
+    const fields = [
+      { field: "question", value: q?.question },
+      { field: "answer", value: q?.answer }
+    ];
+    fields.forEach(({ field, value }) => {
+      const needle = normalizeForAudit(value);
+      if (!needle) return;
+      if (!hay.includes(needle)) issues.push(`q${qi + 1}.${field} not found in rawText`);
+    });
+    (Array.isArray(q?.choices) ? q.choices : []).forEach((value, ci) => {
+      const needle = normalizeForAudit(value);
+      if (!needle) return;
+      if (!hay.includes(needle)) issues.push(`q${qi + 1}.choices[${ci}] not found in rawText`);
+    });
+    (Array.isArray(q?.answers) ? q.answers : []).forEach((value, ai) => {
+      const needle = normalizeForAudit(value);
+      if (!needle) return;
+      if (!hay.includes(needle)) issues.push(`q${qi + 1}.answers[${ai}] not found in rawText`);
+    });
+  });
+  return issues;
+}
+
+async function callOpenAiJson(env, unitTitle, rawText) {
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${env.OPENAI_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: env.OPENAI_MODEL || "gpt-5-mini",
+      input: [
+        {
+          role: "system",
+          content: [{
+            type: "input_text",
+            text: "入力から問題構造を抽出してJSONで返してください。question/choices/answer/answersは原文の部分文字列のみ使用し、勝手に補完しないこと。"
+          }]
+        },
+        {
+          role: "user",
+          content: [{ type: "input_text", text: `unitTitle: ${unitTitle}\n\nrawText:\n${rawText}` }]
+        }
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "dx_parse_result",
+          strict: true,
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              unitTitle: { type: "string" },
+              questions: {
+                type: "array",
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    id: { type: "string" },
+                    type: { type: "string" },
+                    question: { type: "string" },
+                    choices: { type: "array", items: { type: "string" } },
+                    answer: { type: "string" },
+                    answers: { type: "array", items: { type: "string" } },
+                    blankCount: { type: "integer" }
+                  },
+                  required: ["type", "question"]
+                }
+              },
+              issues: { type: "array", items: { type: "string" } }
+            },
+            required: ["unitTitle", "questions", "issues"]
+          }
+        }
+      }
+    })
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`OpenAI API error: ${response.status} ${text.slice(0, 240)}`);
+  }
+  const data = await response.json();
+  if (!data?.output_text) throw new Error("OpenAI output_text missing");
+  return JSON.parse(data.output_text);
+}
+
+async function handleAiParse(env, body) {
+  const unitTitle = normalizeUnitTitle(body?.unitTitle || "");
+  const rawText = String(body?.rawText || "");
+  if (!unitTitle) return { ok: false, error: "invalid_request", message: "unitTitle is required" };
+  if (!rawText.trim()) return { ok: false, error: "invalid_request", message: "rawText is required" };
+
+  let parsed;
+  try {
+    parsed = await callOpenAiJson(env, unitTitle, rawText);
+  } catch (error) {
+    return { ok: false, error: "ai_parse_failed", message: error?.message || String(error) };
+  }
+
+  const questions = Array.isArray(parsed?.questions) ? parsed.questions : [];
+  const issues = Array.isArray(parsed?.issues) ? [...parsed.issues] : [];
+  questions.forEach((q, i) => {
+    if (!ALLOWED_TYPES.has(String(q?.type || ""))) issues.push(`q${i + 1}.type invalid`);
+  });
+  issues.push(...collectMutationIssues(rawText, questions));
+  return { ok: issues.length === 0, unitTitle, questions, issues };
 }
