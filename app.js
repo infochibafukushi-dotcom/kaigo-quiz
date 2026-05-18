@@ -1825,7 +1825,7 @@ async function runDxImport() {
   if (!dxImportState.files.length) throw new Error('docx/zipファイルを選択してください');
   let stats = null;
   dxImportState.loading = true;
-  renderAdmin();
+  renderDxStatus();
   try {
     const docxFiles = await extractDocxFilesFromUpload(dxImportState.files);
     const parsedUnits = [];
@@ -1882,12 +1882,7 @@ async function runDxImport() {
   } finally {
     dxImportState.loading = false;
     dxImportState.currentFileName = "";
-    renderAdmin();
-    if (stats) {
-      dxImportState.stats = stats;
-      dxImportState.mode = importMode;
-      renderDxStatus();
-    }
+    renderDxStatus();
   }
 }
 
