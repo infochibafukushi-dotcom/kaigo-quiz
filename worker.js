@@ -34,15 +34,13 @@ const UNIT_ALIASES = new Map([
 
 const UNIT_ORDER = new Map(CANONICAL_UNITS.map((name, index) => [name, index]));
 
-const corsHeaders = {
-  "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "access-control-allow-headers": "Content-Type, Authorization",
-  "access-control-max-age": "86400"
-};
+const ALLOWED_ORIGINS = new Set([
+  "https://infochibafukushi-dotcom.github.io"
+]);
 
 export default {
   async fetch(request, env) {
+    const corsHeaders = getCorsHeaders(request);
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 200, headers: corsHeaders });
     }
@@ -54,12 +52,12 @@ export default {
       const pathname = normalizePath(url.pathname);
 
       if (pathname === "/" || pathname === "") {
-        return json({ ok: true, app: "kaigo-quiz-worker" });
+        return json({ ok: true, app: "kaigo-quiz-worker" }, 200, corsHeaders);
       }
 
       if (pathname === "/api/health") {
         await ensureSchema(env);
-        return json({ ok: true });
+        return json({ ok: true }, 200, corsHeaders);
       }
 
       if (pathname === "/api/init-db") {
@@ -69,20 +67,20 @@ export default {
           message: "DB initialized",
           course: CANONICAL_COURSE_TITLE,
           units: CANONICAL_UNITS
-        });
+        }, 200, corsHeaders);
       }
 
       if (pathname === "/api/questions" && request.method === "GET") {
         await ensureSchema(env);
         await ensureCanonicalUnits(env);
-        return json(await buildQuizJson(env));
+        return json(await buildQuizJson(env), 200, corsHeaders);
       }
 
       if (pathname === "/api/questions" && request.method === "POST") {
         await ensureSchema(env);
         const body = await safeJson(request);
         const saved = await createQuestion(env, body);
-        return json({ ok: true, question: saved });
+        return json({ ok: true, question: saved }, 200, corsHeaders);
       }
 
       const questionMatch = pathname.match(/^\/api\/questions\/(\d+)$/);
@@ -91,21 +89,21 @@ export default {
         const id = Number(questionMatch[1]);
         const body = await safeJson(request);
         const saved = await updateQuestion(env, id, body);
-        return json({ ok: true, question: saved });
+        return json({ ok: true, question: saved }, 200, corsHeaders);
       }
 
       if (questionMatch && request.method === "DELETE") {
         await ensureSchema(env);
         const id = Number(questionMatch[1]);
         await env.DB.prepare("DELETE FROM questions WHERE id = ?").bind(id).run();
-        return json({ ok: true });
+        return json({ ok: true }, 200, corsHeaders);
       }
 
       if (pathname === "/api/units" && request.method === "POST") {
         await ensureSchema(env);
         const body = await safeJson(request);
         const unit = await upsertUnit(env, body);
-        return json({ ok: true, unit });
+        return json({ ok: true, unit }, 200, corsHeaders);
       }
 
       const unitMatch = pathname.match(/^\/api\/units\/(\d+)$/);
@@ -114,20 +112,34 @@ export default {
         const id = Number(unitMatch[1]);
         const body = await safeJson(request);
         const unit = await patchUnit(env, id, body);
-        return json({ ok: true, unit });
+        return json({ ok: true, unit }, 200, corsHeaders);
       }
 
-      return json({ ok: false, error: "not_found", path: pathname }, 404);
+      return json({ ok: false, error: "not_found", path: pathname }, 404, corsHeaders);
     } catch (error) {
       console.error(error);
       return json({
         ok: false,
         error: "internal_error",
         message: error?.message || String(error)
-      }, 500);
+      }, 500, corsHeaders);
     }
   }
 };
+
+function getCorsHeaders(request) {
+  const origin = request.headers.get("origin") || "";
+  const allowedOrigin = ALLOWED_ORIGINS.has(origin)
+    ? origin
+    : "https://infochibafukushi-dotcom.github.io";
+  return {
+    "access-control-allow-origin": allowedOrigin,
+    "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "access-control-allow-headers": "Content-Type, Authorization",
+    "access-control-max-age": "86400",
+    "vary": "Origin"
+  };
+}
 
 function normalizePath(pathname) {
   return pathname.replace(/\/+$/, "") || "/";
@@ -139,7 +151,7 @@ function validateEnv(env) {
   }
 }
 
-function json(data, status = 200) {
+function json(data, status = 200, corsHeaders = getCorsHeaders(new Request("https://dummy.local"))) {
   return new Response(JSON.stringify(data, null, 2), {
     status,
     headers: {
