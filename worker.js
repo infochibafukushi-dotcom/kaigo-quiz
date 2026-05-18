@@ -726,7 +726,30 @@ async function callOpenAiJson(env, unitTitle, rawText) {
           role: "system",
           content: [{
             type: "input_text",
-            text: "入力から問題構造を抽出してJSONで返してください。question/choices/answer/answersは原文の部分文字列のみ使用し、勝手に補完しないこと。"
+           text: `入力から問題構造を抽出してJSONで返してください。
+
+厳守:
+question / choices / answer / answers は rawText に存在する原文の部分文字列のみ使用。
+勝手な補完・要約・言い換え禁止。
+
+type は以下のみ使用:
+choice = 単一選択
+ox = ○×
+multi = 複数選択
+fill = 単一穴埋め
+fill_multi = 複数穴埋め
+combo = 複合問題
+case = 事例問題
+
+禁止:
+true_false
+single_choice
+multiple_choice
+single
+multiple
+boolean
+
+必ず ALLOWED type のみ返す。`
           }]
         },
         {
@@ -774,7 +797,7 @@ async function callOpenAiJson(env, unitTitle, rawText) {
     throw new Error(`OpenAI API error: ${response.status} ${text.slice(0, 240)}`);
   }
   const data = await response.json();
-  console.log("OpenAI raw response:", JSON.stringify(data));
+ console.log("OpenAI response received");
 
   const outputText =
     data?.output_text ||
@@ -812,9 +835,11 @@ async function handleAiParse(env, body) {
   });
   const auditIssues = collectMutationIssues(rawText, questions);
   const blockingIssues = issues.filter(issue =>
-    !issue.includes("not found in rawText")
-  );
-  return {
+  !issue.includes("not found in rawText") &&
+  !issue.includes("rawTextに解答") &&
+  !issue.includes("answer/answersは空欄")
+);
+    return {
     ok: blockingIssues.length === 0,
     unitTitle,
     questions,
