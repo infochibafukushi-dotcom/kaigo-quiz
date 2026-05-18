@@ -12,7 +12,8 @@ let dxImportState = {
   parsedUnits: [],
   errors: [],
   repairLogs: [],
-  previewReady: false
+  previewReady: false,
+  stats: null
 };
 
 const app = document.getElementById("app");
@@ -1383,6 +1384,7 @@ document.addEventListener("change", async (event) => {
     dxImportState.errors = [];
     dxImportState.repairLogs = [];
     dxImportState.previewReady = false;
+    dxImportState.stats = null;
     renderDxStatus();
   } else if (id === "eq-blankCount") {
     updateAnswerInputsByBlankCount();
@@ -1492,6 +1494,9 @@ function detectTypeStrict(problemText, answerText, choices) {
   if (/(?:^|\n)\s*[（(]\s*[〇○×]\s*[)）]/.test(a)) return "ox";
   if (/回答\s*[:：]\s*（[^）\n]*[|｜][^）\n]*）/.test(a)) return "multi";
   if (/回答\s*[:：]\s*（[^）\n]*[、,][^）\n]*）/.test(a)) return "multi";
+  const choiceAnswer = /回答\s*[:：]\s*（?\s*[0-9０-９A-DＡ-Ｄ]\s*）?/.test(a);
+  const choicePrompt = /番号を選び記入|適切な番号|選びなさい|選択肢/.test(p);
+  if (choiceAnswer || (choices.length >= 2 && choicePrompt)) return "choice";
   const blankHits = (p.match(/（\s*　*\s*）/g) || []).length;
   if (blankHits >= 2) return "fill_multi";
   if (blankHits === 1 || /穴埋め|空欄/.test(p)) return "fill";
@@ -1618,18 +1623,64 @@ function shouldSkipQuestionBySpec(unitTitle, block) {
   return n === 1 || n === 8;
 }
 
+function buildDxStats(units, skipFlags) {
+  const stats = {
+    unitCount: units.length,
+    questionCount: 0,
+    typeCounts: {},
+    answerMissing: 0,
+    choicesMissing: 0,
+    blankCountMismatch: 0,
+    questionAnswerLeak: 0,
+    skippedShogai: skipFlags || { q1: false, q8: false }
+  };
+
+  units.forEach((u) => {
+    (u.questions || []).forEach((q) => {
+      stats.questionCount += 1;
+      stats.typeCounts[q.type] = (stats.typeCounts[q.type] || 0) + 1;
+
+      const requiresAnswers = q.type === "multi" || q.type === "fill_multi" || q.type === "combo";
+      if (requiresAnswers) {
+        if (!Array.isArray(q.answers) || q.answers.length === 0) stats.answerMissing += 1;
+      } else if (!String(q.answer || "")) {
+        stats.answerMissing += 1;
+      }
+
+      if ((q.type === "choice" || q.type === "multi") && (!Array.isArray(q.choices) || q.choices.length < 2)) {
+        stats.choicesMissing += 1;
+      }
+
+      if ((q.type === "fill_multi" || q.type === "image_fill")) {
+        const len = Array.isArray(q.answers) ? q.answers.length : 0;
+        if (Number(q.blankCount) !== len) stats.blankCountMismatch += 1;
+      }
+
+      const tokens = [String(q.answer || ""), ...((q.answers || []).map((v) => String(v)))].filter(Boolean);
+      if (tokens.some((t) => String(q.question || "").includes(t))) stats.questionAnswerLeak += 1;
+    });
+  });
+
+  return stats;
+}
+
 async function runDxImport() {
   if (!dxImportState.files.length) throw new Error('docx/zipファイルを選択してください');
   const docxFiles = await extractDocxFilesFromUpload(dxImportState.files);
   const parsedUnits = [];
   const skipLogs = [];
+  const skipFlags = { q1: false, q8: false };
   for (const file of docxFiles) {
     const unitTitleRaw = file.name.replace(/\.docx$/i, '');
     const unitTitle = normalizeUnitTitle(unitTitleRaw);
     const text = await extractDocxText(file);
     const questions = buildQuestionsFromDocxText(unitTitle, text).map((q, idx) => applyQuestionStructureFix(q, idx));
     const skipped = [1, 8].filter((n) => normalizeUnitTitle(unitTitle) === "障害の理解" && !questions.some((q) => String(q.id) === `dx-${n}`));
-    skipped.forEach((n) => skipLogs.push(`${file.name}: 問${n} を仕様スキップ`));
+    skipped.forEach((n) => {
+      skipLogs.push(`${file.name}: 問${n} を仕様スキップ`);
+      if (n === 1) skipFlags.q1 = true;
+      if (n === 8) skipFlags.q8 = true;
+    });
     parsedUnits.push({ unitTitle, source: file.name, questions });
   }
   const repaired = runRepairLoop(parsedUnits);
@@ -1637,6 +1688,7 @@ async function runDxImport() {
   dxImportState.errors = repaired.errors;
   dxImportState.repairLogs = [...skipLogs, ...repaired.logs];
   dxImportState.previewReady = repaired.errors.length === 0;
+  dxImportState.stats = buildDxStats(repaired.units, skipFlags);
 }
 
 function renderDxStatus() {
@@ -1644,7 +1696,12 @@ function renderDxStatus() {
   if (!box) return;
   const unitCount = dxImportState.parsedUnits.length;
   const qCount = dxImportState.parsedUnits.reduce((a, u) => a + (u.questions||[]).length, 0);
-  box.innerHTML = `取込単元: ${unitCount} / 問題数: ${qCount}<br>${dxImportState.repairLogs.map(esc).join('<br>')}${dxImportState.errors.length ? `<br>ERROR: ${esc(dxImportState.errors.join('; '))}` : ''}`;
+  const st = dxImportState.stats;
+  const typeText = st ? Object.entries(st.typeCounts).map(([k, v]) => `${k}:${v}`).join(", ") : "";
+  const metrics = st
+    ? `<br>type別件数: ${esc(typeText)}<br>answer欠落件数: ${st.answerMissing}<br>choices欠落件数: ${st.choicesMissing}<br>blankCount不整合件数: ${st.blankCountMismatch}<br>questionへの答え混入検知件数: ${st.questionAnswerLeak}<br>障害の理解 問1/問8 スキップ確認: ${st.skippedShogai.q1 ? "OK" : "NG"}/${st.skippedShogai.q8 ? "OK" : "NG"}`
+    : "";
+  box.innerHTML = `取込単元: ${unitCount} / 問題数: ${qCount}${metrics}<br>${dxImportState.repairLogs.map(esc).join('<br>')}${dxImportState.errors.length ? `<br>ERROR: ${esc(dxImportState.errors.join('; '))}` : ''}`;
 }
 
 function applyDxPreviewToDb() {
