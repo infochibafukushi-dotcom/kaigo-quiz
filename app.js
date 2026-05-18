@@ -1411,7 +1411,7 @@ async function extractDocxText(file) {
 
 function splitProblemAndAnswerSections(text) {
   const lines = String(text || "").split(/\r?\n/);
-  const answerStart = lines.findIndex((line) => /^\s*【\s*答え\s*】\s*$/.test(line) || /^\s*答え\s*$/.test(line));
+  const answerStart = lines.findIndex((line) => /^\s*【\s*答え(?:と問題形式)?\s*】\s*$/.test(line) || /^\s*答え(?:と問題形式)?\s*$/.test(line));
   if (answerStart < 0) return { problemText: text, answerText: "" };
   return {
     problemText: lines.slice(0, answerStart).join("\n"),
@@ -1429,10 +1429,10 @@ function parseQuestionMap(sectionText) {
     map.set(currentNo, buffer.join("\n"));
   };
   for (const line of lines) {
-    const m = line.match(/^\s*(?:Q|問)\s*(\d+)\s*[\.．:]?\s*(.*)$/i);
+    const m = line.match(/^\s*(?:Q|問)\s*([0-9０-９]+)\s*[\.．:：]?\s*(.*)$/i);
     if (m) {
       flush();
-      currentNo = Number(m[1]);
+      currentNo = Number(String(m[1]).replace(/[０-９]/g, (d) => String("０１２３４５６７８９".indexOf(d))));
       buffer = [m[2] || ""];
     } else if (currentNo != null) {
       buffer.push(line);
@@ -1446,7 +1446,7 @@ function extractChoicesFromProblem(problemText) {
   return String(problemText || "")
     .split(/\r?\n/)
     .map((line) => {
-      const m = line.match(/^\s*([1-9１-９A-DＡ-Ｄ])[\)）\.．]\s*(.+)\s*$/);
+      const m = line.match(/^\s*(?:[（(]?\s*)?([1-9１-９A-DＡ-Ｄ])[)）\.．]\s*(.+)\s*$/);
       return m ? `${m[1]} ${m[2]}` : null;
     })
     .filter(Boolean);
@@ -1458,32 +1458,40 @@ function extractParenTokens(text) {
 
 function extractAnswersByType(problemText, answerText, guessedType) {
   const parenTokens = extractParenTokens(answerText);
+  const cleaned = String(answerText || "").replace(/\r/g, "");
+  const answerLines = cleaned.split("\n").map((v) => String(v || "").trim()).filter(Boolean);
+  const normalizedTokens = parenTokens
+    .flatMap((token) => String(token).split(/[|｜、,・\/]/))
+    .map((v) => norm(v))
+    .filter(Boolean);
+  const oxTokens = [...cleaned.matchAll(/[〇○×]/g)].map((m) => m[0] === "〇" ? "○" : m[0]);
+
   if (guessedType === "ox") {
-    const ox = parenTokens.filter((t) => t.includes("〇") || t.includes("○") || t.includes("×"));
+    const ox = oxTokens.length ? oxTokens : parenTokens.filter((t) => t.includes("〇") || t.includes("○") || t.includes("×"));
     return { answer: ox[0] || "", answers: ox };
   }
   if (guessedType === "multi" || guessedType === "combo" || guessedType === "fill_multi") {
-    const line = String(answerText || "").match(/(?:回答|解答|正解)\s*[:：]\s*（?([^）\n]+)）?/);
-    if (line && (line[1] || "").match(/[|｜、,]/)) {
-      const arr = (line[1] || "").split(/[|｜、,]/).map((v) => String(v));
-      return { answer: "", answers: arr };
+    const line = cleaned.match(/(?:回答|解答|正解|答え)\s*[:：]\s*（?([^）\n]+)）?/);
+    if (line && (line[1] || "").match(/[|｜、,・\/]/)) {
+      return { answer: "", answers: String(line[1] || "").split(/[|｜、,・\/]/).map((v) => norm(v)).filter(Boolean) };
     }
-    if (parenTokens.length > 1) return { answer: "", answers: parenTokens };
-    if (parenTokens.length === 1 && String(parenTokens[0]).match(/[|｜、,]/)) {
-      return { answer: "", answers: String(parenTokens[0]).split(/[|｜、,]/) };
-    }
-    return { answer: "", answers: parenTokens.length ? parenTokens : [] };
+    if (normalizedTokens.length > 0) return { answer: "", answers: normalizedTokens };
+    if (answerLines.length > 0) return { answer: "", answers: answerLines.slice(0, 6) };
+    return { answer: "", answers: [] };
   }
   if (guessedType === "fill") {
-    const fromAnswerBody = extractParenTokens(answerText);
-    return { answer: fromAnswerBody[0] || "", answers: [] };
+    const line = cleaned.match(/(?:回答|解答|正解|答え(?:例)?)\s*[:：]\s*(.+)$/m);
+    if (line && line[1]) return { answer: norm(line[1].replace(/[（）]/g, "")), answers: [] };
+    if (normalizedTokens.length) return { answer: normalizedTokens[0] || "", answers: [] };
+    return { answer: norm(answerLines[0] || ""), answers: [] };
   }
   if (guessedType === "choice") {
-    const line = String(answerText || "").match(/(?:回答|解答|正解)\s*[:：]\s*（?([^）\n]+)）?/);
-    if (line) return { answer: String(line[1] || ""), answers: [] };
-    return { answer: parenTokens[0] || "", answers: [] };
+    const line = cleaned.match(/(?:回答|解答|正解|答え)\s*[:：]\s*（?([^）\n]+)）?/);
+    if (line) return { answer: norm(String(line[1] || "").split(/[|｜、,・\/]/)[0]), answers: [] };
+    if (normalizedTokens.length) return { answer: normalizedTokens[0] || "", answers: [] };
+    return { answer: norm(answerLines[0] || ""), answers: [] };
   }
-  return { answer: parenTokens[0] || "", answers: parenTokens };
+  return { answer: normalizedTokens[0] || norm(answerLines[0] || ""), answers: normalizedTokens };
 }
 
 function detectTypeStrict(problemText, answerText, choices) {
@@ -1491,13 +1499,12 @@ function detectTypeStrict(problemText, answerText, choices) {
   const a = String(answerText || "");
   if (/事例/.test(p)) return "case";
   if (/組み合わせ|対応関係|組合せ/.test(p)) return "combo";
-  if (/(?:^|\n)\s*[（(]\s*[〇○×]\s*[)）]/.test(a)) return "ox";
-  if (/回答\s*[:：]\s*（[^）\n]*[|｜][^）\n]*）/.test(a)) return "multi";
-  if (/回答\s*[:：]\s*（[^）\n]*[、,][^）\n]*）/.test(a)) return "multi";
-  const choiceAnswer = /回答\s*[:：]\s*（?\s*[0-9０-９A-DＡ-Ｄ]\s*）?/.test(a);
+  if (/(?:^|\n)\s*(?:\d+[\.．]\s*)?[（(]?\s*[〇○×]\s*[)）]?/.test(a)) return "ox";
+  if (/(?:回答|解答|正解|答え)\s*[:：]\s*（?[^）\n]*[|｜、,・\/][^）\n]*）?/.test(a)) return "multi";
+  const choiceAnswer = /(?:回答|解答|正解|答え)\s*[:：]\s*（?\s*[0-9０-９A-DＡ-Ｄ①-④]\s*）?/.test(a);
   const choicePrompt = /番号を選び記入|適切な番号|選びなさい|選択肢/.test(p);
   if (choiceAnswer || (choices.length >= 2 && choicePrompt)) return "choice";
-  const blankHits = (p.match(/（\s*　*\s*）/g) || []).length;
+  const blankHits = (p.match(/[（(]\s*(?:　|_|\s)*\s*[)）]/g) || []).length;
   if (blankHits >= 2) return "fill_multi";
   if (blankHits === 1 || /穴埋め|空欄/.test(p)) return "fill";
   if (choices.length >= 2) return "choice";
@@ -1527,7 +1534,8 @@ function buildQuestionsFromDocxText(unitTitle, text) {
   const problems = parseQuestionMap(problemText);
   const answers = parseQuestionMap(answerText);
   const items = [];
-  for (const [no, pText] of problems.entries()) {
+  const ordered = [...problems.entries()].sort((a, b) => a[0] - b[0]);
+  for (const [no, pText] of ordered) {
     if (shouldSkipQuestionBySpec(unitTitle, `問${no}`)) continue;
     items.push(buildQuestionFromPair(no, pText, answers.get(no) || ""));
   }
@@ -1664,6 +1672,27 @@ function buildDxStats(units, skipFlags) {
   return stats;
 }
 
+function evaluateDxQualityGate(stats) {
+  const failures = [];
+  if (!stats || typeof stats !== "object") {
+    return { ok: false, failures: ["stats missing"] };
+  }
+
+  if (Number(stats.questionCount) !== 193) failures.push(`問題数NG(${stats.questionCount})`);
+  if (Number(stats.answerMissing) !== 0) failures.push(`answer欠落NG(${stats.answerMissing})`);
+  if (Number(stats.choicesMissing) !== 0) failures.push(`choices欠落NG(${stats.choicesMissing})`);
+  if (Number(stats.blankCountMismatch) !== 0) failures.push(`blankCount不整合NG(${stats.blankCountMismatch})`);
+  if (Number(stats.questionAnswerLeak) !== 0) failures.push(`question答え混入NG(${stats.questionAnswerLeak})`);
+
+  const requiredTypes = ["ox", "choice", "multi", "fill", "fill_multi", "combo", "case"];
+  requiredTypes.forEach((type) => {
+    const count = Number(stats.typeCounts?.[type] || 0);
+    if (count <= 0) failures.push(`type=${type} 0件`);
+  });
+
+  return { ok: failures.length === 0, failures };
+}
+
 async function runDxImport() {
   if (!dxImportState.files.length) throw new Error('docx/zipファイルを選択してください');
   const docxFiles = await extractDocxFilesFromUpload(dxImportState.files);
@@ -1687,8 +1716,12 @@ async function runDxImport() {
   dxImportState.parsedUnits = repaired.units;
   dxImportState.errors = repaired.errors;
   dxImportState.repairLogs = [...skipLogs, ...repaired.logs];
-  dxImportState.previewReady = repaired.errors.length === 0;
   dxImportState.stats = buildDxStats(repaired.units, skipFlags);
+  const gate = evaluateDxQualityGate(dxImportState.stats);
+  if (!gate.ok) {
+    dxImportState.errors = [...dxImportState.errors, ...gate.failures];
+  }
+  dxImportState.previewReady = dxImportState.errors.length === 0;
 }
 
 function renderDxStatus() {
@@ -1698,8 +1731,9 @@ function renderDxStatus() {
   const qCount = dxImportState.parsedUnits.reduce((a, u) => a + (u.questions||[]).length, 0);
   const st = dxImportState.stats;
   const typeText = st ? Object.entries(st.typeCounts).map(([k, v]) => `${k}:${v}`).join(", ") : "";
+  const gate = st ? evaluateDxQualityGate(st) : { ok: false, failures: ["stats missing"] };
   const metrics = st
-    ? `<br>type別件数: ${esc(typeText)}<br>answer欠落件数: ${st.answerMissing}<br>choices欠落件数: ${st.choicesMissing}<br>blankCount不整合件数: ${st.blankCountMismatch}<br>questionへの答え混入検知件数: ${st.questionAnswerLeak}<br>障害の理解 問1/問8 スキップ確認: ${st.skippedShogai.q1 ? "OK" : "NG"}/${st.skippedShogai.q8 ? "OK" : "NG"}`
+    ? `<br>type別件数: ${esc(typeText)}<br>answer欠落件数: ${st.answerMissing}<br>choices欠落件数: ${st.choicesMissing}<br>blankCount不整合件数: ${st.blankCountMismatch}<br>questionへの答え混入検知件数: ${st.questionAnswerLeak}<br>品質ゲート: ${gate.ok ? "OK" : "NG"}${gate.ok ? "" : `<br>ゲート失敗: ${esc(gate.failures.join(' / '))}`}<br>障害の理解 問1/問8 スキップ確認: ${st.skippedShogai.q1 ? "OK" : "NG"}/${st.skippedShogai.q8 ? "OK" : "NG"}`
     : "";
   box.innerHTML = `取込単元: ${unitCount} / 問題数: ${qCount}${metrics}<br>${dxImportState.repairLogs.map(esc).join('<br>')}${dxImportState.errors.length ? `<br>ERROR: ${esc(dxImportState.errors.join('; '))}` : ''}`;
 }
