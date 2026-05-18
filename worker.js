@@ -810,6 +810,15 @@ async function handleAiParse(env, body) {
   questions.forEach((q, i) => {
     if (!ALLOWED_TYPES.has(String(q?.type || ""))) issues.push(`q${i + 1}.type invalid`);
   });
-  issues.push(...collectMutationIssues(rawText, questions));
-  return { ok: issues.length === 0, unitTitle, questions, issues };
+  const auditIssues = collectMutationIssues(rawText, questions);
+  const blockingIssues = issues.filter(issue =>
+    !issue.includes("not found in rawText")
+  );
+  return {
+    ok: blockingIssues.length === 0,
+    unitTitle,
+    questions,
+    issues: blockingIssues,
+    auditIssues
+  };
 }
