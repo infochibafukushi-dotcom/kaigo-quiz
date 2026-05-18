@@ -1823,6 +1823,7 @@ async function runDxImport() {
   dxImportState.mode = importMode;
   console.log("LOCKED IMPORT MODE:", importMode);
   if (!dxImportState.files.length) throw new Error('docx/zipファイルを選択してください');
+  let stats = null;
   dxImportState.loading = true;
   renderAdmin();
   try {
@@ -1858,18 +1859,20 @@ async function runDxImport() {
     dxImportState.parsedUnits = repaired.units;
     dxImportState.errors = repaired.errors;
     dxImportState.repairLogs = [...skipLogs, ...repaired.logs];
-    dxImportState.stats = buildDxStats(repaired.units, skipFlags);
+    stats = buildDxStats(repaired.units, skipFlags);
     const expectedCounts = buildExpectedUnitCountsFromCurrentDb();
-    dxImportState.stats.expectedUnitCounts = expectedCounts;
-    dxImportState.stats.unitCountMismatch = Object.keys(expectedCounts).reduce((acc, title) => {
+    stats.expectedUnitCounts = expectedCounts;
+    stats.unitCountMismatch = Object.keys(expectedCounts).reduce((acc, title) => {
       const expected = Number(expectedCounts[title] || 0);
-      const actual = Number(dxImportState.stats.actualUnitCounts[title] || 0);
+      const actual = Number(stats.actualUnitCounts[title] || 0);
       return acc + ((expected > 0 && actual !== expected) ? 1 : 0);
     }, 0);
-    dxImportState.stats.workerIssues = workerIssues;
-    dxImportState.stats.unitCount = timings.length;
-    dxImportState.stats.totalSeconds = timings.reduce((a, t) => a + t.ms, 0) / 1000;
-    dxImportState.stats.avgSecondsPerUnit = timings.length ? (dxImportState.stats.totalSeconds / timings.length) : 0;
+    stats.workerIssues = workerIssues;
+    stats.unitCount = timings.length;
+    stats.totalSeconds = timings.reduce((a, t) => a + t.ms, 0) / 1000;
+    stats.avgSecondsPerUnit = timings.length ? (stats.totalSeconds / timings.length) : 0;
+    dxImportState.stats = stats;
+    dxImportState.mode = importMode;
     console.log("DX IMPORT MODE:", importMode);
     const gate = evaluateDxQualityGate(dxImportState.stats, importMode);
     if (!gate.ok) {
@@ -1880,10 +1883,17 @@ async function runDxImport() {
     dxImportState.loading = false;
     dxImportState.currentFileName = "";
     renderAdmin();
+    if (stats) {
+      dxImportState.stats = stats;
+      dxImportState.mode = importMode;
+      renderDxStatus();
+    }
   }
 }
 
 function renderDxStatus() {
+  console.log("RENDER STATUS MODE:", dxImportState.mode);
+  console.log("RENDER STATUS STATS:", dxImportState.stats);
   const box = document.getElementById('dx-status');
   if (!box) return;
   const unitCount = dxImportState.parsedUnits.length;
@@ -1891,10 +1901,9 @@ function renderDxStatus() {
   const stats = dxImportState.stats;
   const typeText = stats ? Object.entries(stats.typeCounts).map(([k, v]) => `${k}:${v}`).join(", ") : "";
   const importMode = dxImportState.mode === "append" ? "append" : "replace";
-  console.log("DX STATUS MODE:", importMode);
-  const gate = stats ? evaluateDxQualityGate(stats, importMode) : { ok: false, failures: ["stats missing"] };
+  const quality = stats ? evaluateDxQualityGate(stats, importMode) : { ok: false, failures: ["stats missing"] };
   const metrics = stats
-    ? `<br>type別件数: ${esc(typeText)}<br>answer欠落件数: ${stats.answerMissing}<br>choices欠落件数: ${stats.choicesMissing}<br>blankCount不整合件数: ${stats.blankCountMismatch}<br>questionへの答え混入検知件数: ${stats.questionAnswerLeak}<br>worker issues件数: ${stats.workerIssues}<br>unitCount不一致件数: ${stats.unitCountMismatch}<br>11単元完走: ${stats.unitCount === 11 ? "OK" : "NG"} (${stats.unitCount || 0}/11)<br>1単元平均秒数: ${(Number(stats.avgSecondsPerUnit) || 0).toFixed(2)}秒<br>品質ゲート: ${gate.ok ? "OK" : "NG"}${gate.ok ? "" : `<br>ゲート失敗: ${esc(gate.failures.join(' / '))}`}<br>障害の理解 問1/問8 スキップ確認: ${stats.skippedShogai.q1 ? "OK" : "NG"}/${stats.skippedShogai.q8 ? "OK" : "NG"}`
+    ? `<br>type別件数: ${esc(typeText)}<br>answer欠落件数: ${stats.answerMissing}<br>choices欠落件数: ${stats.choicesMissing}<br>blankCount不整合件数: ${stats.blankCountMismatch}<br>questionへの答え混入検知件数: ${stats.questionAnswerLeak}<br>worker issues件数: ${stats.workerIssues}<br>unitCount不一致件数: ${stats.unitCountMismatch}<br>11単元完走: ${stats.unitCount === 11 ? "OK" : "NG"} (${stats.unitCount || 0}/11)<br>1単元平均秒数: ${(Number(stats.avgSecondsPerUnit) || 0).toFixed(2)}秒<br>品質ゲート: ${quality.ok ? "OK" : "NG"}${quality.ok ? "" : `<br>ゲート失敗: ${esc(quality.failures.join(' / '))}`}<br>障害の理解 問1/問8 スキップ確認: ${stats.skippedShogai.q1 ? "OK" : "NG"}/${stats.skippedShogai.q8 ? "OK" : "NG"}`
     : "";
   const loadingText = dxImportState.loading
     ? `AI解析中...<br>${esc(dxImportState.currentFileName)} を解析中...<br>${dxImportState.progressCurrent} / ${dxImportState.progressTotal} ファイル<br>`
