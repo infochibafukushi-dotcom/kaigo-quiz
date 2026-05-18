@@ -797,7 +797,7 @@ boolean
     throw new Error(`OpenAI API error: ${response.status} ${text.slice(0, 240)}`);
   }
   const data = await response.json();
- console.log("OpenAI response received");
+  console.log("OpenAI response received");
 
   const outputText =
     data?.output_text ||
@@ -835,11 +835,12 @@ async function handleAiParse(env, body) {
   });
   const auditIssues = collectMutationIssues(rawText, questions);
   const blockingIssues = issues.filter(issue =>
-  !issue.includes("not found in rawText") &&
-  !issue.includes("rawTextに解答") &&
-  !issue.includes("answer/answersは空欄")
-);
-    return {
+    !issue.includes("not found in rawText") &&
+    !issue.includes("rawTextに解答") &&
+    !issue.includes("answer/answersは空欄")
+  );
+
+  return {
     ok: blockingIssues.length === 0,
     unitTitle,
     questions,

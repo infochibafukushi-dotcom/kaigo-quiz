@@ -1462,11 +1462,24 @@ async function extractDocxText(file) {
   return String(result.value || "");
 }
 
+function removeAnswerSectionForAi(rawText) {
+  const text = String(rawText || "");
+  const markers = ["【答え】", "【解答】", "解答", "答え", "回答："];
+  let cutIndex = -1;
+  for (const marker of markers) {
+    const idx = text.indexOf(marker);
+    if (idx >= 0 && (cutIndex < 0 || idx < cutIndex)) {
+      cutIndex = idx;
+    }
+  }
+  return cutIndex >= 0 ? text.slice(0, cutIndex) : text;
+}
+
 async function parseQuestionsViaWorker(unitTitle, sourceFile, rawText) {
   const response = await fetch(`${API_BASE}/api/ai-parse`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ unitTitle, sourceFile, rawText })
+    body: JSON.stringify({ unitTitle, sourceFile, rawText: removeAnswerSectionForAi(rawText) })
   });
   const body = await response.json();
   if (!response.ok || !body?.ok) {
