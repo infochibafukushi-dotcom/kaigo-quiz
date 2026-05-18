@@ -1786,22 +1786,28 @@ function evaluateDxQualityGate(stats, mode = "replace") {
     return { ok: false, failures: ["stats missing"] };
   }
 
-  if (mode === "replace" && Number(stats.unitCountMismatch) !== 0) failures.push(`unitCount不一致NG(${stats.unitCountMismatch})`);
-  if (mode === "append" && Number(stats.answerMissing) !== 0) failures.push(`answer欠落NG(${stats.answerMissing})`);
-  if (mode === "append" && Number(stats.choicesMissing) !== 0) failures.push(`choices欠落NG(${stats.choicesMissing})`);
-  if (mode === "append" && Number(stats.blankCountMismatch) !== 0) failures.push(`blankCount不整合NG(${stats.blankCountMismatch})`);
-  if (Number(stats.questionAnswerLeak) !== 0) failures.push(`question答え混入NG(${stats.questionAnswerLeak})`);
-  if (mode === "append" && Number(stats.workerIssues) !== 0) failures.push(`worker issues NG(${stats.workerIssues})`);
+  const normalizedMode = mode === "append" ? "append" : "replace";
 
-  if (mode === "replace") {
-    if (Number(stats.totalUnits) !== 11) failures.push(`11単元完走NG(${stats.totalUnits || 0}/11)`);
-    const requiredTypes = ["ox", "choice", "multi", "fill", "fill_multi", "combo", "case"];
-    requiredTypes.forEach((type) => {
-      const count = Number(stats.typeCounts?.[type] || 0);
-      if (count <= 0) failures.push(`type=${type} 0件`);
-    });
-    if (!stats.skippedShogai?.q1 || !stats.skippedShogai?.q8) failures.push("障害の理解固定チェックNG");
+  if (normalizedMode === "append") {
+    if (Number(stats.answerMissing) !== 0) failures.push(`answer欠落NG(${stats.answerMissing})`);
+    if (Number(stats.choicesMissing) !== 0) failures.push(`choices欠落NG(${stats.choicesMissing})`);
+    if (Number(stats.blankCountMismatch) !== 0) failures.push(`blankCount不整合NG(${stats.blankCountMismatch})`);
+    if (Number(stats.questionAnswerLeak) !== 0) failures.push(`question答え混入NG(${stats.questionAnswerLeak})`);
+    if (Number(stats.workerIssues) !== 0) failures.push(`worker issues NG(${stats.workerIssues})`);
+    return { ok: failures.length === 0, failures };
   }
+
+  if (Number(stats.unitCountMismatch) !== 0) failures.push(`unitCount不一致NG(${stats.unitCountMismatch})`);
+  if (Number(stats.questionAnswerLeak) !== 0) failures.push(`question答え混入NG(${stats.questionAnswerLeak})`);
+  if (Number(stats.totalUnits) !== 11) failures.push(`11単元完走NG(${stats.totalUnits || 0}/11)`);
+
+  const requiredTypes = ["ox", "choice", "multi", "fill", "fill_multi", "combo", "case"];
+  requiredTypes.forEach((type) => {
+    const count = Number(stats.typeCounts?.[type] || 0);
+    if (count <= 0) failures.push(`type=${type} 0件`);
+  });
+
+  if (!stats.skippedShogai?.q1 || !stats.skippedShogai?.q8) failures.push("障害の理解固定チェックNG");
 
   return { ok: failures.length === 0, failures };
 }
