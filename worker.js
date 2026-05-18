@@ -685,34 +685,30 @@ function normalizeForAudit(value) {
     .trim();
 }
 
-function collectMutationIssues(rawText, questions) {
+function collectMutationIssues(rawText, answerText, questions) {
   const issues = [];
-  const hay = normalizeForAudit(rawText);
+  const questionHay = normalizeForAudit(rawText);
+  const answerHay = normalizeForAudit(answerText);
   (questions || []).forEach((q, qi) => {
-    const fields = [
-      { field: "question", value: q?.question },
-      { field: "answer", value: q?.answer }
-    ];
-    fields.forEach(({ field, value }) => {
-      const needle = normalizeForAudit(value);
-      if (!needle) return;
-      if (!hay.includes(needle)) issues.push(`q${qi + 1}.${field} not found in rawText`);
-    });
+    const questionNeedle = normalizeForAudit(q?.question);
+    if (questionNeedle && !questionHay.includes(questionNeedle)) issues.push(`q${qi + 1}.question not found in rawText`);
+    const answerNeedle = normalizeForAudit(q?.answer);
+    if (answerNeedle && !answerHay.includes(answerNeedle)) issues.push(`q${qi + 1}.answer not found in answerText`);
     (Array.isArray(q?.choices) ? q.choices : []).forEach((value, ci) => {
       const needle = normalizeForAudit(value);
       if (!needle) return;
-      if (!hay.includes(needle)) issues.push(`q${qi + 1}.choices[${ci}] not found in rawText`);
+      if (!questionHay.includes(needle)) issues.push(`q${qi + 1}.choices[${ci}] not found in rawText`);
     });
     (Array.isArray(q?.answers) ? q.answers : []).forEach((value, ai) => {
       const needle = normalizeForAudit(value);
       if (!needle) return;
-      if (!hay.includes(needle)) issues.push(`q${qi + 1}.answers[${ai}] not found in rawText`);
+      if (!answerHay.includes(needle)) issues.push(`q${qi + 1}.answers[${ai}] not found in answerText`);
     });
   });
   return issues;
 }
 
-async function callOpenAiJson(env, unitTitle, rawText) {
+async function callOpenAiJson(env, unitTitle, rawText, answerText) {
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
@@ -729,8 +725,10 @@ async function callOpenAiJson(env, unitTitle, rawText) {
            text: `入力から問題構造を抽出してJSONで返してください。
 
 厳守:
-question / choices / answer / answers は rawText に存在する原文の部分文字列のみ使用。
+question / choices は rawText に存在する原文の部分文字列のみ使用。
+answer / answers は answerText に存在する原文の部分文字列のみ使用。
 勝手な補完・要約・言い換え禁止。
+question に答えを混入させないこと。
 
 type は以下のみ使用:
 choice = 単一選択
@@ -754,7 +752,7 @@ boolean
         },
         {
           role: "user",
-          content: [{ type: "input_text", text: `unitTitle: ${unitTitle}\n\nrawText:\n${rawText}` }]
+          content: [{ type: "input_text", text: `unitTitle: ${unitTitle}\n\nrawText:\n${rawText}\n\nanswerText:\n${answerText}` }]
         }
       ],
       text: {
@@ -818,12 +816,14 @@ boolean
 async function handleAiParse(env, body) {
   const unitTitle = normalizeUnitTitle(body?.unitTitle || "");
   const rawText = String(body?.rawText || "");
+  const answerText = String(body?.answerText || "");
   if (!unitTitle) return { ok: false, error: "invalid_request", message: "unitTitle is required" };
   if (!rawText.trim()) return { ok: false, error: "invalid_request", message: "rawText is required" };
+  if (!answerText.trim()) return { ok: false, error: "invalid_request", message: "answerText is required" };
 
   let parsed;
   try {
-    parsed = await callOpenAiJson(env, unitTitle, rawText);
+    parsed = await callOpenAiJson(env, unitTitle, rawText, answerText);
   } catch (error) {
     return { ok: false, error: "ai_parse_failed", message: error?.message || String(error) };
   }
@@ -833,7 +833,7 @@ async function handleAiParse(env, body) {
   questions.forEach((q, i) => {
     if (!ALLOWED_TYPES.has(String(q?.type || ""))) issues.push(`q${i + 1}.type invalid`);
   });
-  const auditIssues = collectMutationIssues(rawText, questions);
+  const auditIssues = collectMutationIssues(rawText, answerText, questions);
   const blockingIssues = issues.filter(issue =>
     !issue.includes("not found in rawText") &&
     !issue.includes("rawTextに解答") &&

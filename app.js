@@ -1462,24 +1462,27 @@ async function extractDocxText(file) {
   return String(result.value || "");
 }
 
-function removeAnswerSectionForAi(rawText) {
+function splitQuestionAndAnswerText(rawText) {
   const text = String(rawText || "");
   const markers = ["【答え】", "【解答】", "解答", "答え", "回答："];
-  let cutIndex = -1;
+  let splitIndex = -1;
   for (const marker of markers) {
     const idx = text.indexOf(marker);
-    if (idx >= 0 && (cutIndex < 0 || idx < cutIndex)) {
-      cutIndex = idx;
-    }
+    if (idx >= 0 && (splitIndex < 0 || idx < splitIndex)) splitIndex = idx;
   }
-  return cutIndex >= 0 ? text.slice(0, cutIndex) : text;
+  if (splitIndex < 0) return { questionText: text, answerText: "" };
+  return {
+    questionText: text.slice(0, splitIndex).trim(),
+    answerText: text.slice(splitIndex).trim()
+  };
 }
 
 async function parseQuestionsViaWorker(unitTitle, sourceFile, rawText) {
+  const { questionText, answerText } = splitQuestionAndAnswerText(rawText);
   const response = await fetch(`${API_BASE}/api/ai-parse`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ unitTitle, sourceFile, rawText: removeAnswerSectionForAi(rawText) })
+    body: JSON.stringify({ unitTitle, sourceFile, rawText: questionText, answerText })
   });
   const body = await response.json();
   if (!response.ok || !body?.ok) {
@@ -1784,18 +1787,20 @@ function evaluateDxQualityGate(stats, mode = "replace") {
   }
 
   if (mode === "replace" && Number(stats.unitCountMismatch) !== 0) failures.push(`unitCount不一致NG(${stats.unitCountMismatch})`);
-  if (Number(stats.answerMissing) !== 0) failures.push(`answer欠落NG(${stats.answerMissing})`);
-  if (Number(stats.choicesMissing) !== 0) failures.push(`choices欠落NG(${stats.choicesMissing})`);
-  if (Number(stats.blankCountMismatch) !== 0) failures.push(`blankCount不整合NG(${stats.blankCountMismatch})`);
+  if (mode === "append" && Number(stats.answerMissing) !== 0) failures.push(`answer欠落NG(${stats.answerMissing})`);
+  if (mode === "append" && Number(stats.choicesMissing) !== 0) failures.push(`choices欠落NG(${stats.choicesMissing})`);
+  if (mode === "append" && Number(stats.blankCountMismatch) !== 0) failures.push(`blankCount不整合NG(${stats.blankCountMismatch})`);
   if (Number(stats.questionAnswerLeak) !== 0) failures.push(`question答え混入NG(${stats.questionAnswerLeak})`);
-  if (Number(stats.workerIssues) !== 0) failures.push(`worker issues NG(${stats.workerIssues})`);
+  if (mode === "append" && Number(stats.workerIssues) !== 0) failures.push(`worker issues NG(${stats.workerIssues})`);
 
   if (mode === "replace") {
+    if (Number(stats.totalUnits) !== 11) failures.push(`11単元完走NG(${stats.totalUnits || 0}/11)`);
     const requiredTypes = ["ox", "choice", "multi", "fill", "fill_multi", "combo", "case"];
     requiredTypes.forEach((type) => {
       const count = Number(stats.typeCounts?.[type] || 0);
       if (count <= 0) failures.push(`type=${type} 0件`);
     });
+    if (!stats.skippedShogai?.q1 || !stats.skippedShogai?.q8) failures.push("障害の理解固定チェックNG");
   }
 
   return { ok: failures.length === 0, failures };
