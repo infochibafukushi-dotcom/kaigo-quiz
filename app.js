@@ -1407,46 +1407,126 @@ async function extractDocxText(file) {
   return String(result.value || "");
 }
 
-function detectType(block) {
-  if (/○|×/.test(block) && /正解/.test(block)) return "ox";
-  if (/複数選択|当てはまるものをすべて/.test(block)) return "multi";
-  if (/穴埋め|（\s*\d+\s*）|\[\s*\]/.test(block)) return "fill_multi";
-  if (/組み合わせ/.test(block)) return "combo";
-  if (/事例/.test(block)) return "case";
-  if (/選択肢|A\.|B\.|1\./.test(block)) return "choice";
+function splitProblemAndAnswerSections(text) {
+  const lines = String(text || "").split(/\r?\n/);
+  let answerStart = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (/^\s*【?答え】?\s*$/.test(lines[i])) { answerStart = i; break; }
+  }
+  if (answerStart < 0) {
+    return { problemText: text, answerText: "" };
+  }
+  return {
+    problemText: lines.slice(0, answerStart).join("\n"),
+    answerText: lines.slice(answerStart + 1).join("\n")
+  };
+}
+
+function parseQuestionMap(sectionText) {
+  const lines = String(sectionText || "").split(/\r?\n/);
+  const map = new Map();
+  let currentNo = null;
+  let buffer = [];
+
+  function flush() {
+    if (currentNo == null) return;
+    map.set(currentNo, buffer.join("\n").trim());
+  }
+
+  for (const raw of lines) {
+    const line = String(raw || "");
+    const m = line.match(/^\s*(?:Q|問)\s*(\d+)\s*[\.．:]?\s*(.*)$/i);
+    if (m) {
+      flush();
+      currentNo = Number(m[1]);
+      buffer = [m[2] || ""];
+    } else if (currentNo != null) {
+      buffer.push(line);
+    }
+  }
+  flush();
+  return map;
+}
+
+function extractChoices(problemText) {
+  const lines = String(problemText || "").split(/\r?\n/);
+  return lines
+    .map((line) => {
+      const m = line.match(/^\s*([A-DＡ-Ｄ]|[1-9１-９])[\)）\.．]\s*(.+)$/);
+      return m ? `${m[1]} ${m[2]}` : null;
+    })
+    .filter(Boolean);
+}
+
+function extractAnswersFromText(answerText) {
+  const answers = [];
+  const paren = [...String(answerText || "").matchAll(/（([^）]+)）/g)].map((m) => (m[1] || "").trim());
+  if (paren.length) return paren;
+
+  const line = String(answerText || "").match(/(?:回答|解答|正解)\s*[:：]\s*(.+)/);
+  if (line) {
+    const raw = line[1] || "";
+    if (raw.includes("|") || raw.includes("｜")) {
+      return raw.split(/[|｜]/).map((v) => v.trim()).filter((v) => v !== "");
+    }
+    if (raw.includes("、") || raw.includes(",")) {
+      return raw.split(/[、,]/).map((v) => v.trim()).filter((v) => v !== "");
+    }
+    return [raw.trim()].filter(Boolean);
+  }
+
+  return answers;
+}
+
+function detectTypeFromPair(problemText, answerText, choices, answers) {
+  if (/事例/.test(problemText)) return "case";
+  if (/組み合わせ|対応/.test(problemText)) return "combo";
+  if (answers.some((a) => a === "〇" || a === "○" || a === "×")) return "ox";
+  if ((/穴埋め|空欄/.test(problemText) || /（\s*　+\s*）/.test(problemText) || /\(\s*\)/.test(problemText)) && answers.length > 1) return "fill_multi";
+  if ((/穴埋め|空欄/.test(problemText) || /（\s*　+\s*）/.test(problemText) || /\(\s*\)/.test(problemText)) && answers.length <= 1) return "fill";
+  if (choices.length >= 2 && answers.length > 1) return "multi";
+  if (choices.length >= 2) return "choice";
   return "fill";
 }
 
-function parseQuestionBlocks(text) {
-  const lines = text.split(/\r?\n/).map((v) => v.trim()).filter(Boolean);
-  const blocks = [];
-  let cur = [];
-  for (const line of lines) {
-    if (/^(Q|問)\s*\d+/i.test(line) && cur.length) {
-      blocks.push(cur.join("\n"));
-      cur = [line];
-    } else {
-      cur.push(line);
-    }
+function buildQuestionFromPair(no, problemText, answerText) {
+  const choices = extractChoices(problemText);
+  const answers = extractAnswersFromText(answerText);
+  const type = detectTypeFromPair(problemText, answerText, choices, answers);
+  const question = normalizeQuestion({
+    type,
+    question: String(problemText || "").trim(),
+    choices,
+    answer: "",
+    answers: []
+  });
+
+  if (type === "multi" || type === "fill_multi" || type === "image_fill" || type === "combo") {
+    question.answers = answers.slice();
+    question.blankCount = Math.max(1, question.answers.length || 1);
+  } else {
+    question.answer = answers[0] || "";
   }
-  if (cur.length) blocks.push(cur.join("\n"));
-  return blocks;
+
+  question.id = question.id ?? `dx-${no}`;
+  return question;
 }
 
-function parseBlockToQuestion(block) {
-  const type = detectType(block);
-  const q = normalizeQuestion({ type, question: block, choices: [], answers: [], answer: "" });
-  const choiceMatches = block.match(/(?:^|\n)(?:[A-DＡ-Ｄ1-4１-４][\.\)）]\s*.+)/g) || [];
-  q.choices = choiceMatches.map((v) => v.replace(/^[\s\n]+/, "").trim());
-  const answerLine = (block.split(/\r?\n/).find((l) => /^(正解|解答)[:：]/.test(l)) || "");
-  const ans = answerLine.replace(/^(正解|解答)[:：]/, "").trim();
-  if (type === "multi" || type === "fill_multi" || type === "image_fill") {
-    q.answers = ans ? ans.split(/[、,\n]/).map(norm).filter(Boolean) : [];
-    q.blankCount = Math.max(1, q.answers.length || 1);
-  } else {
-    q.answer = ans;
+function buildQuestionsFromDocxText(unitTitle, text) {
+  const { problemText, answerText } = splitProblemAndAnswerSections(text);
+  const problemMap = parseQuestionMap(problemText);
+  const answerMap = parseQuestionMap(answerText);
+  const questions = [];
+
+  for (const [no, pText] of problemMap.entries()) {
+    const pseudoBlock = `問${no}
+${pText}`;
+    if (shouldSkipQuestionBySpec(unitTitle, pseudoBlock)) continue;
+    const aText = answerMap.get(no) || "";
+    questions.push(buildQuestionFromPair(no, pText, aText));
   }
-  return q;
+
+  return questions;
 }
 
 async function extractDocxFilesFromUpload(files) {
@@ -1547,15 +1627,9 @@ async function runDxImport() {
     const unitTitleRaw = file.name.replace(/\.docx$/i, '');
     const unitTitle = normalizeUnitTitle(unitTitleRaw);
     const text = await extractDocxText(file);
-    const blocks = parseQuestionBlocks(text);
-    const filteredBlocks = blocks.filter((block) => {
-      if (shouldSkipQuestionBySpec(unitTitle, block)) {
-        skipLogs.push(`${file.name}: ${block.split(/\r?\n/)[0]} を仕様スキップ`);
-        return false;
-      }
-      return true;
-    });
-    const questions = filteredBlocks.map(parseBlockToQuestion).map((q, idx) => applyQuestionStructureFix(q, idx));
+    const questions = buildQuestionsFromDocxText(unitTitle, text).map((q, idx) => applyQuestionStructureFix(q, idx));
+    const skipped = [1, 8].filter((n) => normalizeUnitTitle(unitTitle) === "障害の理解" && !questions.some((q) => String(q.id) === `dx-${n}`));
+    skipped.forEach((n) => skipLogs.push(`${file.name}: 問${n} を仕様スキップ`));
     parsedUnits.push({ unitTitle, source: file.name, questions });
   }
   const repaired = runRepairLoop(parsedUnits);
