@@ -819,8 +819,7 @@ async function handleAiParse(env, body) {
   const answerText = String(body?.answerText || "");
   if (!unitTitle) return { ok: false, error: "invalid_request", message: "unitTitle is required" };
   if (!rawText.trim()) return { ok: false, error: "invalid_request", message: "rawText is required" };
-  if (!answerText.trim()) return { ok: false, error: "invalid_request", message: "answerText is required" };
-
+ 
   let parsed;
   try {
     parsed = await callOpenAiJson(env, unitTitle, rawText, answerText);
