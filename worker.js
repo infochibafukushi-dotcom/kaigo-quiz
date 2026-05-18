@@ -754,8 +754,16 @@ async function callOpenAiJson(env, unitTitle, rawText) {
     throw new Error(`OpenAI API error: ${response.status} ${text.slice(0, 240)}`);
   }
   const data = await response.json();
-  if (!data?.output_text) throw new Error("OpenAI output_text missing");
-  return JSON.parse(data.output_text);
+  console.log("OpenAI raw response:", JSON.stringify(data));
+
+  const outputText =
+    data?.output_text ||
+    data?.output?.[0]?.content?.[0]?.text ||
+    data?.choices?.[0]?.message?.content ||
+    "";
+
+  if (!outputText) throw new Error("OpenAI output_text missing");
+  return JSON.parse(outputText);
 }
 
 async function handleAiParse(env, body) {
