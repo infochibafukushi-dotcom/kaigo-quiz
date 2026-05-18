@@ -61,10 +61,12 @@ export default {
       }
 
       if (pathname === "/api/init-db") {
-        await initDb(env);
+        const mode = url.searchParams.get("mode") || "replace";
+        await initDb(env, mode);
         return json({
           ok: true,
-          message: "DB initialized",
+          mode,
+          message: mode === "append" ? "DB append-ready" : "DB initialized",
           course: CANONICAL_COURSE_TITLE,
           units: CANONICAL_UNITS
         }, 200, corsHeaders);
@@ -245,19 +247,37 @@ async function ensureColumn(env, table, column, definition) {
   }
 }
 
-async function initDb(env) {
+async function initDb(env, mode = "replace") {
   await ensureSchema(env);
 
-  await env.DB.batch([
-    env.DB.prepare("DELETE FROM questions"),
-    env.DB.prepare("DELETE FROM units")
-  ]);
+  if (mode === "replace") {
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM questions"),
+      env.DB.prepare("DELETE FROM units")
+    ]);
+  }
 
   for (let i = 0; i < CANONICAL_UNITS.length; i += 1) {
-    await env.DB.prepare(`
-      INSERT INTO units (course, title, is_visible, sort_order, created_at, updated_at)
-      VALUES (?, ?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    `).bind(CANONICAL_COURSE_TITLE, CANONICAL_UNITS[i], i + 1).run();
+    if (mode === "replace") {
+      await env.DB.prepare(`
+        INSERT INTO units (course, title, is_visible, sort_order, created_at, updated_at)
+        VALUES (?, ?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `).bind(CANONICAL_COURSE_TITLE, CANONICAL_UNITS[i], i + 1).run();
+    } else {
+      await env.DB.prepare(`
+        INSERT INTO units (course, title, is_visible, sort_order, created_at, updated_at)
+        SELECT ?, ?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        WHERE NOT EXISTS (
+          SELECT 1 FROM units WHERE course = ? AND title = ?
+        )
+      `).bind(
+        CANONICAL_COURSE_TITLE,
+        CANONICAL_UNITS[i],
+        i + 1,
+        CANONICAL_COURSE_TITLE,
+        CANONICAL_UNITS[i]
+      ).run();
+    }
   }
 }
 
@@ -758,7 +778,13 @@ async function callOpenAiJson(env, unitTitle, rawText) {
 
   const outputText =
     data?.output_text ||
+    data?.output?.[0]?.content?.[0]?.text?.value ||
     data?.output?.[0]?.content?.[0]?.text ||
+    data?.output?.map(o =>
+      (o.content || [])
+        .map(c => c.text?.value || c.text || "")
+        .join("")
+    ).join("") ||
     data?.choices?.[0]?.message?.content ||
     "";
 
