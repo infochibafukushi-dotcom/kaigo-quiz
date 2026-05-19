@@ -743,6 +743,47 @@ function collectMutationIssues(rawText, answerText, questions) {
   return issues;
 }
 
+function countFillBlanks(question) {
+  return (String(question || "").match(/（　　　）/g) || []).length;
+}
+
+function normalizeAiQuestions(questions) {
+  return (Array.isArray(questions) ? questions : []).map((q) => {
+    const type = String(q?.type || "");
+    const normalized = {
+      ...q,
+      question: String(q?.question || ""),
+      answers: Array.isArray(q?.answers) ? q.answers.map((v) => String(v ?? "")) : [],
+      answer: String(q?.answer || "")
+    };
+
+    if (type !== "fill" && type !== "fill_multi") return normalized;
+
+    const answerPool = [];
+    if (normalized.answer) answerPool.push(normalized.answer);
+    normalized.answers.forEach((value) => {
+      if (value) answerPool.push(value);
+    });
+
+    let patchedQuestion = normalized.question;
+    answerPool
+      .filter((value) => value.length > 0)
+      .sort((a, b) => b.length - a.length)
+      .forEach((value) => {
+        patchedQuestion = patchedQuestion.split(value).join("（　　　）");
+      });
+    normalized.question = patchedQuestion;
+
+    const blankCount = Math.max(1, countFillBlanks(normalized.question));
+    normalized.blankCount = blankCount;
+    normalized.answers = normalized.answers.slice(0, blankCount);
+    while (normalized.answers.length < blankCount) normalized.answers.push("");
+    normalized.answer = normalized.answers[0] || "";
+
+    return normalized;
+  });
+}
+
 async function callOpenAiJson(env, unitTitle, rawText, answerText) {
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -758,6 +799,20 @@ async function callOpenAiJson(env, unitTitle, rawText, answerText) {
           content: [{
             type: "input_text",
            text: `入力から問題構造を抽出してJSONで返してください。
+
+目的:
+同じ rawText / answerText 入力では毎回同一のJSONを返すこと（決定的に出力する）。
+
+構造保持ルール:
+1) 問題を勝手に統合しない。1問を case 化してまとめない。
+2) 設問番号（問1/問2/①/②/③ など）の構造を保持する。
+3) question 文の改変禁止。統合禁止。分割禁止。
+4) question / choices / answer / answers は出現順を保持する。
+
+type判定ルール:
+- 「番号を選びなさい」「番号を記入」など、番号選択・番号記入を求める問題は必ず type="choice"。
+- 「〇」「×」「正しいものに〇」など○×判定を求める問題は必ず type="ox"。
+- fill_multi の blankCount は question 内の「（　　　）」個数と一致させる。
 
 厳守:
 question / choices は rawText に存在する原文の部分文字列のみ使用。
@@ -862,7 +917,7 @@ async function handleAiParse(env, body) {
     return { ok: false, error: "ai_parse_failed", message: error?.message || String(error) };
   }
 
-  const questions = Array.isArray(parsed?.questions) ? parsed.questions : [];
+  const questions = normalizeAiQuestions(parsed?.questions);
   const issues = Array.isArray(parsed?.issues) ? [...parsed.issues] : [];
   questions.forEach((q, i) => {
     if (!ALLOWED_TYPES.has(String(q?.type || ""))) issues.push(`q${i + 1}.type invalid`);
