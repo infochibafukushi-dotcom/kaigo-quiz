@@ -496,7 +496,7 @@ async function normalizeQuestionPayload(env, payload) {
   }
 
   const choices = Array.isArray(payload?.choices) ? payload.choices.map((x) => String(x ?? "").trim()).filter(Boolean) : [];
-  const answers = Array.isArray(payload?.answers) ? payload.answers.map((x) => String(x ?? "").trim()) : [];
+  let answers = Array.isArray(payload?.answers) ? payload.answers.map((x) => String(x ?? "").trim()).filter((v) => v) : [];
 
   let answer = String(payload?.answer ?? "").trim();
   if (type === "choice") {

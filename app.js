@@ -1759,9 +1759,12 @@ function buildDxStats(units, skipFlags) {
         if (Number(q.blankCount) !== len) stats.blankCountMismatch += 1;
       }
 
-      const tokens = [String(q.answer || ""), ...((q.answers || []).map((v) => String(v)))].filter(Boolean);
-      const leakTokens = tokens.filter((t) => String(t).trim().length >= 2);
-      if (leakTokens.some((t) => String(q.question || "").includes(t))) stats.questionAnswerLeak += 1;
+      const leakTargetTypes = new Set(["choice", "fill", "fill_multi"]);
+      if (leakTargetTypes.has(String(q.type || "").trim())) {
+        const tokens = [String(q.answer || ""), ...((q.answers || []).map((v) => String(v)))].filter(Boolean);
+        const leakTokens = tokens.filter((t) => String(t).trim().length >= 2);
+        if (leakTokens.some((t) => String(q.question || "").includes(t))) stats.questionAnswerLeak += 1;
+      }
     });
   });
   Object.keys(EXPECTED_UNIT_QUESTION_COUNTS).forEach((title) => {
