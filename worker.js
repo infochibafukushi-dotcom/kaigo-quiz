@@ -743,6 +743,47 @@ function collectMutationIssues(rawText, answerText, questions) {
   return issues;
 }
 
+function countFillBlanks(question) {
+  return (String(question || "").match(/（　　　）/g) || []).length;
+}
+
+function normalizeAiQuestions(questions) {
+  return (Array.isArray(questions) ? questions : []).map((q) => {
+    const type = String(q?.type || "");
+    const normalized = {
+      ...q,
+      question: String(q?.question || ""),
+      answers: Array.isArray(q?.answers) ? q.answers.map((v) => String(v ?? "")) : [],
+      answer: String(q?.answer || "")
+    };
+
+    if (type !== "fill" && type !== "fill_multi") return normalized;
+
+    const answerPool = [];
+    if (normalized.answer) answerPool.push(normalized.answer);
+    normalized.answers.forEach((value) => {
+      if (value) answerPool.push(value);
+    });
+
+    let patchedQuestion = normalized.question;
+    answerPool
+      .filter((value) => value.length > 0)
+      .sort((a, b) => b.length - a.length)
+      .forEach((value) => {
+        patchedQuestion = patchedQuestion.split(value).join("（　　　）");
+      });
+    normalized.question = patchedQuestion;
+
+    const blankCount = Math.max(1, countFillBlanks(normalized.question));
+    normalized.blankCount = blankCount;
+    normalized.answers = normalized.answers.slice(0, blankCount);
+    while (normalized.answers.length < blankCount) normalized.answers.push("");
+    normalized.answer = normalized.answers[0] || "";
+
+    return normalized;
+  });
+}
+
 async function callOpenAiJson(env, unitTitle, rawText, answerText) {
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -752,12 +793,36 @@ async function callOpenAiJson(env, unitTitle, rawText, answerText) {
     },
     body: JSON.stringify({
       model: env.OPENAI_MODEL || "gpt-5-mini",
+      temperature: 0,
+      top_p: 0.1,
       input: [
         {
           role: "system",
           content: [{
             type: "input_text",
            text: `入力から問題構造を抽出してJSONで返してください。
+
+目的:
+同じ rawText / answerText 入力では毎回同一のJSONを返すこと（決定的に出力する）。
+
+構造保持ルール:
+1) 問題を勝手に統合しない。1問を case 化してまとめない。
+2) 設問番号（問1/問2/①/②/③ など）の構造を保持する。
+3) question 文の改変禁止。統合禁止。分割禁止。
+4) question / choices / answer / answers は出現順を保持する。
+
+type判定ルール:
+- 「番号を選びなさい」「番号を記入」など、番号選択・番号記入を求める問題は必ず type="choice"。
+- 「〇」「×」「正しいものに〇」など○×判定を求める問題は必ず type="ox"。
+- fill_multi の blankCount は question 内の「（　　　）」個数と一致させる。
+
+case 判定ルール:
+- case は事例問題のみ
+- 利用者/事例/状況説明があり、その後に設問が続く形式のみ
+- 通常の選択問題を case にするな
+- ○×問題を case にするな
+- 番号選択問題を case にするな
+- type に迷ったら case を選ぶな
 
 厳守:
 question / choices は rawText に存在する原文の部分文字列のみ使用。
@@ -782,7 +847,18 @@ single
 multiple
 boolean
 
-必ず ALLOWED type のみ返す。`
+必ず ALLOWED type のみ返す。
+
+絶対ルール:
+- rawText に存在しない問題を作るな
+- 問題数を増やすな
+- 問題数を減らすな
+- 問題を分割するな
+- 問題を統合するな
+- answer が不明なら推測するな
+- answer 不明時は issues に "answer_unknown" を追加する
+- type を推測で変更するな
+- 問題文の指示を最優先する`
           }]
         },
         {
@@ -862,16 +938,24 @@ async function handleAiParse(env, body) {
     return { ok: false, error: "ai_parse_failed", message: error?.message || String(error) };
   }
 
-  const questions = Array.isArray(parsed?.questions) ? parsed.questions : [];
+  const questions = normalizeAiQuestions(parsed?.questions);
   const issues = Array.isArray(parsed?.issues) ? [...parsed.issues] : [];
   questions.forEach((q, i) => {
-    if (!ALLOWED_TYPES.has(String(q?.type || ""))) issues.push(`q${i + 1}.type invalid`);
+    const type = String(q?.type || "");
+    const questionText = String(q?.question || "");
+    if (!ALLOWED_TYPES.has(type)) issues.push(`q${i + 1}.type invalid`);
+    if (type === "case" && !/(次の事例|利用者|事例|状況説明)/.test(questionText)) {
+      issues.push(`q${i + 1}.invalid_case`);
+    }
+    if (type === "fill" || type === "fill_multi") {
+      const hasKnownAnswer = (Array.isArray(q?.answers) ? q.answers : []).some((v) => String(v || "").trim() !== "");
+      if (!hasKnownAnswer) issues.push(`q${i + 1}.answer_unknown`);
+    }
   });
   const auditIssues = collectMutationIssues(rawText, answerText, questions);
   const blockingIssues = issues.filter(issue =>
     !issue.includes("not found in rawText") &&
-    !issue.includes("rawTextに解答") &&
-    !issue.includes("answer/answersは空欄")
+    !issue.includes("rawTextに解答")
   );
 
   return {
