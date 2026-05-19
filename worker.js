@@ -793,8 +793,6 @@ async function callOpenAiJson(env, unitTitle, rawText, answerText) {
     },
     body: JSON.stringify({
       model: env.OPENAI_MODEL || "gpt-5-mini",
-      temperature: 0,
-      top_p: 0.1,
       input: [
         {
           role: "system",
