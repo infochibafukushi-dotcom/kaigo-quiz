@@ -1740,9 +1740,13 @@ function buildDxStats(units, skipFlags) {
       stats.typeCounts[q.type] = (stats.typeCounts[q.type] || 0) + 1;
 
       const requiresAnswers = q.type === "multi" || q.type === "fill_multi" || q.type === "combo";
+      const hasAnswer = String(q.answer || "").trim().length > 0;
+      const hasAnswers = Array.isArray(q.answers) && q.answers.some((v) => String(v || "").trim().length > 0);
       if (requiresAnswers) {
-        if (!Array.isArray(q.answers) || q.answers.length === 0) stats.answerMissing += 1;
-      } else if (!String(q.answer || "")) {
+        if (!hasAnswers) stats.answerMissing += 1;
+      } else if (q.type === "ox") {
+        if (!hasAnswer && !hasAnswers) stats.answerMissing += 1;
+      } else if (!hasAnswer) {
         stats.answerMissing += 1;
       }
 
@@ -1756,7 +1760,8 @@ function buildDxStats(units, skipFlags) {
       }
 
       const tokens = [String(q.answer || ""), ...((q.answers || []).map((v) => String(v)))].filter(Boolean);
-      if (tokens.some((t) => String(q.question || "").includes(t))) stats.questionAnswerLeak += 1;
+      const leakTokens = tokens.filter((t) => String(t).trim().length >= 2);
+      if (leakTokens.some((t) => String(q.question || "").includes(t))) stats.questionAnswerLeak += 1;
     });
   });
   Object.keys(EXPECTED_UNIT_QUESTION_COUNTS).forEach((title) => {
