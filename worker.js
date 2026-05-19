@@ -977,7 +977,8 @@ async function handleAiParse(env, body) {
   const blockingIssues = issues.filter(issue =>
     !issue.includes("not found in rawText") &&
     !issue.includes("rawTextに解答") &&
-    !issue.includes("answer_unknown")
+    !issue.includes("answer_unknown") &&
+    !issue.includes("invalid_case")
   );
 
   return {
