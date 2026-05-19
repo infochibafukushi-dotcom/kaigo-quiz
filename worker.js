@@ -463,6 +463,31 @@ function parseArray(value) {
   }
 }
 
+function normalizeChoiceAnswer(answer, choices) {
+  const normalizedChoices = Array.isArray(choices) ? choices.map((c) => String(c || "").trim()) : [];
+  if (!answer) return "";
+
+  const direct = normalizedChoices.find((c) => c && c === answer);
+  if (direct) return direct;
+
+  const digitMap = { "①": 1, "②": 2, "③": 3, "④": 4, "１": 1, "２": 2, "３": 3, "４": 4 };
+  const compact = String(answer).replace(/\s+/g, "");
+  const mapped = digitMap[compact];
+  if (mapped && normalizedChoices[mapped - 1]) return normalizedChoices[mapped - 1];
+
+  const m = String(answer).match(/[1-4１-４①-④]/);
+  if (m) {
+    const token = m[0];
+    const idx = digitMap[token] || Number(token);
+    if (idx >= 1 && idx <= normalizedChoices.length) return normalizedChoices[idx - 1];
+  }
+
+  const includes = normalizedChoices.filter((c) => c && String(answer).includes(c));
+  if (includes.length === 1) return includes[0];
+
+  return "";
+}
+
 async function normalizeQuestionPayload(env, payload) {
   const type = String(payload?.type || "fill").trim();
   const questionText = String(payload?.question || "").trim();
@@ -473,7 +498,15 @@ async function normalizeQuestionPayload(env, payload) {
   const choices = Array.isArray(payload?.choices) ? payload.choices.map((x) => String(x ?? "").trim()).filter(Boolean) : [];
   const answers = Array.isArray(payload?.answers) ? payload.answers.map((x) => String(x ?? "").trim()) : [];
 
-  const answer = String(payload?.answer ?? "").trim();
+  let answer = String(payload?.answer ?? "").trim();
+  if (type === "choice") {
+    const normalizedFromAnswer = normalizeChoiceAnswer(answer, choices);
+    const normalizedFromAnswers = answers
+      .map((v) => normalizeChoiceAnswer(String(v || "").trim(), choices))
+      .find(Boolean) || "";
+    answer = normalizedFromAnswer || normalizedFromAnswers;
+  }
+
   if (answer && answers.length === 0 && (type === "choice" || type === "ox" || type === "fill")) {
     answers.push(answer);
   }
