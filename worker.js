@@ -793,6 +793,8 @@ async function callOpenAiJson(env, unitTitle, rawText, answerText) {
     },
     body: JSON.stringify({
       model: env.OPENAI_MODEL || "gpt-5-mini",
+      temperature: 0,
+      top_p: 0.1,
       input: [
         {
           role: "system",
@@ -838,6 +840,16 @@ multiple
 boolean
 
 必ず ALLOWED type のみ返す。`
+絶対ルール:
+- rawText に存在しない問題を作るな
+- 問題数を増やすな
+- 問題数を減らすな
+- 問題を分割するな
+- 問題を統合するな
+- answer が不明なら推測するな
+- answer 不明時は issues に "answer_unknown" を追加する
+- type を推測で変更するな
+- 問題文の指示を最優先する`
           }]
         },
         {
@@ -921,12 +933,16 @@ async function handleAiParse(env, body) {
   const issues = Array.isArray(parsed?.issues) ? [...parsed.issues] : [];
   questions.forEach((q, i) => {
     if (!ALLOWED_TYPES.has(String(q?.type || ""))) issues.push(`q${i + 1}.type invalid`);
+    const type = String(q?.type || "");
+    if (type === "fill" || type === "fill_multi") {
+      const hasKnownAnswer = (Array.isArray(q?.answers) ? q.answers : []).some((v) => String(v || "").trim() !== "");
+      if (!hasKnownAnswer) issues.push(`q${i + 1}.answer_unknown`);
+    }
   });
   const auditIssues = collectMutationIssues(rawText, answerText, questions);
   const blockingIssues = issues.filter(issue =>
     !issue.includes("not found in rawText") &&
-    !issue.includes("rawTextに解答") &&
-    !issue.includes("answer/answersは空欄")
+    !issue.includes("rawTextに解答")
   );
 
   return {
