@@ -847,7 +847,8 @@ single
 multiple
 boolean
 
-必ず ALLOWED type のみ返す。`
+必ず ALLOWED type のみ返す。
+
 絶対ルール:
 - rawText に存在しない問題を作るな
 - 問題数を増やすな
