@@ -1875,11 +1875,27 @@ async function runDxImport() {
       });
       parsedUnits.push({ unitTitle, source: file.name, questions });
     }
-    const repaired = runRepairLoop(parsedUnits);
-    dxImportState.parsedUnits = repaired.units;
-    dxImportState.errors = repaired.errors;
-    dxImportState.repairLogs = [...skipLogs, ...repaired.logs];
-    stats = buildDxStats(repaired.units, skipFlags);
+    const isDeterministicFastPath = workerIssues === 0 && parsedUnits.every((unit) =>
+      Array.isArray(unit?.questions) && unit.questions.every((q) => TYPES.includes(String(q?.type || "")))
+    );
+
+    let normalizedUnits = parsedUnits;
+    let repairErrors = [];
+    let repairLogs = [];
+
+    if (isDeterministicFastPath) {
+      repairLogs = ["deterministic parser mode: repair loop skipped"];
+    } else {
+      const repaired = runRepairLoop(parsedUnits);
+      normalizedUnits = repaired.units;
+      repairErrors = repaired.errors;
+      repairLogs = repaired.logs;
+    }
+
+    dxImportState.parsedUnits = normalizedUnits;
+    dxImportState.errors = repairErrors;
+    dxImportState.repairLogs = [...skipLogs, ...repairLogs];
+    stats = buildDxStats(normalizedUnits, skipFlags);
     const expectedCounts = buildExpectedUnitCountsFromCurrentDb();
     stats.expectedUnitCounts = expectedCounts;
     stats.unitCountMismatch = Object.keys(expectedCounts).reduce((acc, title) => {
