@@ -123,6 +123,18 @@ export default {
         return json({ ok: true, unit }, 200, corsHeaders);
       }
 
+      if (unitMatch && request.method === "DELETE") {
+        await ensureSchema(env);
+        const id = Number(unitMatch[1]);
+        const unit = await getUnitById(env, id);
+        if (!unit) {
+          return json({ ok: true }, 200, corsHeaders);
+        }
+
+        await deleteUnit(env, id, unit);
+        return json({ ok: true }, 200, corsHeaders);
+      }
+
       return json({ ok: false, error: "not_found", path: pathname }, 404, corsHeaders);
     } catch (error) {
       console.error(error);
@@ -684,6 +696,17 @@ async function patchUnit(env, id, payload) {
   `).bind(title, isVisible, unitOrder(title) + 1, id).run();
 
   return await getUnitById(env, id);
+}
+
+async function deleteUnit(env, id, unit = null) {
+  const currentUnit = unit || await getUnitById(env, id);
+  if (!currentUnit) return;
+
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM questions WHERE course = ? AND unit = ?")
+      .bind(currentUnit.courseId, currentUnit.title),
+    env.DB.prepare("DELETE FROM units WHERE id = ?").bind(id)
+  ]);
 }
 
 async function getUnitById(env, id) {

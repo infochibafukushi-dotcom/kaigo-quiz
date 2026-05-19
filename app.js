@@ -1349,9 +1349,24 @@ else if (action === "back-units") {
     renderAdmin();
   } else if (action === "del-unit") {
     const course = curCourse();
-    if (course && confirm("単元削除しますか？")) {
-      course.units.splice(unitIndex, 1);
-      unitIndex = 0;
+    const unit = curUnit();
+    if (course && unit && confirm("単元削除しますか？")) {
+      const unitId = unit.unitId || unit.id;
+      if (unitId) {
+        try {
+          await api(`/api/units/${unitId}`, { method: "DELETE" });
+          await loadData(true);
+        } catch (error) {
+          alert(`単元削除エラー: ${error.message}`);
+          renderAdmin();
+          return;
+        }
+      } else {
+        course.units.splice(unitIndex, 1);
+      }
+
+      const units = curCourse()?.units || [];
+      unitIndex = units.length > 0 ? Math.min(unitIndex, units.length - 1) : 0;
     }
     renderAdmin();
   } else if (action === "save-all") {
