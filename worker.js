@@ -126,7 +126,12 @@ export default {
       if (unitMatch && request.method === "DELETE") {
         await ensureSchema(env);
         const id = Number(unitMatch[1]);
-        await deleteUnit(env, id);
+        const unit = await getUnitById(env, id);
+        if (!unit) {
+          return json({ ok: true }, 200, corsHeaders);
+        }
+
+        await deleteUnit(env, id, unit);
         return json({ ok: true }, 200, corsHeaders);
       }
 
@@ -693,13 +698,13 @@ async function patchUnit(env, id, payload) {
   return await getUnitById(env, id);
 }
 
-async function deleteUnit(env, id) {
-  const unit = await getUnitById(env, id);
-  if (!unit) return;
+async function deleteUnit(env, id, unit = null) {
+  const currentUnit = unit || await getUnitById(env, id);
+  if (!currentUnit) return;
 
   await env.DB.batch([
     env.DB.prepare("DELETE FROM questions WHERE course = ? AND unit = ?")
-      .bind(unit.courseId, unit.title),
+      .bind(currentUnit.courseId, currentUnit.title),
     env.DB.prepare("DELETE FROM units WHERE id = ?").bind(id)
   ]);
 }
