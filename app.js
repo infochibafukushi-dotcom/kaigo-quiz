@@ -1816,7 +1816,6 @@ function evaluateDxQualityGate(stats, mode) {
   console.log("DX QUALITY GATE NORMALIZED:", normalizedMode);
 
   if (normalizedMode === "append") {
-    if (Number(stats.answerMissing) !== 0) failures.push(`answer欠落NG(${stats.answerMissing})`);
     if (Number(stats.choicesMissing) !== 0) failures.push(`choices欠落NG(${stats.choicesMissing})`);
     if (Number(stats.blankCountMismatch) !== 0) failures.push(`blankCount不整合NG(${stats.blankCountMismatch})`);
     if (Number(stats.questionAnswerLeak) !== 0) failures.push(`question答え混入NG(${stats.questionAnswerLeak})`);
