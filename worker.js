@@ -959,9 +959,10 @@ async function handleAiParse(env, body) {
     return { ok: false, error: "ai_parse_failed", message: error?.message || String(error) };
   }
 
-  const questions = normalizeAiQuestions(parsed?.questions);
+  const normalizedQuestions = normalizeAiQuestions(parsed?.questions);
   const issues = Array.isArray(parsed?.issues) ? [...parsed.issues] : [];
-  questions.forEach((q, i) => {
+  const questions = [];
+  normalizedQuestions.forEach((q, i) => {
     const type = String(q?.type || "");
     const questionText = String(q?.question || "");
     if (!ALLOWED_TYPES.has(type)) issues.push(`q${i + 1}.type invalid`);
@@ -969,9 +970,15 @@ async function handleAiParse(env, body) {
       issues.push(`q${i + 1}.invalid_case`);
     }
     if (type === "fill" || type === "fill_multi") {
-      const hasKnownAnswer = (Array.isArray(q?.answers) ? q.answers : []).some((v) => String(v || "").trim() !== "");
-      if (!hasKnownAnswer) issues.push(`q${i + 1}.answer_unknown`);
+      const hasAnswer = String(q?.answer || "").trim() !== "";
+      const hasAnswers = (Array.isArray(q?.answers) ? q.answers : []).some((v) => String(v || "").trim() !== "");
+      if (!hasAnswer && !hasAnswers) {
+        issues.push(`q${i + 1}.answer_unknown_skipped`);
+        return;
+      }
+      if (!hasAnswers) issues.push(`q${i + 1}.answer_unknown`);
     }
+    questions.push(q);
   });
   const auditIssues = collectMutationIssues(rawText, answerText, questions);
   const blockingIssues = issues.filter(issue =>
