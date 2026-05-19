@@ -1875,16 +1875,12 @@ async function runDxImport() {
       });
       parsedUnits.push({ unitTitle, source: file.name, questions });
     }
-    const isDeterministicFastPath = workerIssues === 0 && parsedUnits.every((unit) =>
-      Array.isArray(unit?.questions) && unit.questions.every((q) => TYPES.includes(String(q?.type || "")))
-    );
-
     let normalizedUnits = parsedUnits;
     let repairErrors = [];
     let repairLogs = [];
 
-    if (isDeterministicFastPath) {
-      repairLogs = ["deterministic parser mode: repair loop skipped"];
+    if (true) {
+      repairLogs = ["DX deterministic mode: repair loop bypassed"];
     } else {
       const repaired = runRepairLoop(parsedUnits);
       normalizedUnits = repaired.units;
