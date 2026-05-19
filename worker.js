@@ -743,6 +743,47 @@ function collectMutationIssues(rawText, answerText, questions) {
   return issues;
 }
 
+function countFillBlanks(question) {
+  return (String(question || "").match(/（　　　）/g) || []).length;
+}
+
+function normalizeAiQuestions(questions) {
+  return (Array.isArray(questions) ? questions : []).map((q) => {
+    const type = String(q?.type || "");
+    const normalized = {
+      ...q,
+      question: String(q?.question || ""),
+      answers: Array.isArray(q?.answers) ? q.answers.map((v) => String(v ?? "")) : [],
+      answer: String(q?.answer || "")
+    };
+
+    if (type !== "fill" && type !== "fill_multi") return normalized;
+
+    const answerPool = [];
+    if (normalized.answer) answerPool.push(normalized.answer);
+    normalized.answers.forEach((value) => {
+      if (value) answerPool.push(value);
+    });
+
+    let patchedQuestion = normalized.question;
+    answerPool
+      .filter((value) => value.length > 0)
+      .sort((a, b) => b.length - a.length)
+      .forEach((value) => {
+        patchedQuestion = patchedQuestion.split(value).join("（　　　）");
+      });
+    normalized.question = patchedQuestion;
+
+    const blankCount = Math.max(1, countFillBlanks(normalized.question));
+    normalized.blankCount = blankCount;
+    normalized.answers = normalized.answers.slice(0, blankCount);
+    while (normalized.answers.length < blankCount) normalized.answers.push("");
+    normalized.answer = normalized.answers[0] || "";
+
+    return normalized;
+  });
+}
+
 async function callOpenAiJson(env, unitTitle, rawText, answerText) {
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -876,7 +917,7 @@ async function handleAiParse(env, body) {
     return { ok: false, error: "ai_parse_failed", message: error?.message || String(error) };
   }
 
-  const questions = Array.isArray(parsed?.questions) ? parsed.questions : [];
+  const questions = normalizeAiQuestions(parsed?.questions);
   const issues = Array.isArray(parsed?.issues) ? [...parsed.issues] : [];
   questions.forEach((q, i) => {
     if (!ALLOWED_TYPES.has(String(q?.type || ""))) issues.push(`q${i + 1}.type invalid`);
