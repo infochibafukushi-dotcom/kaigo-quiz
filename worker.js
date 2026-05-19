@@ -169,9 +169,6 @@ function validateEnv(env) {
   if (!env.DB) {
     throw new Error("Missing D1 binding: DB");
   }
-  if (!env.OPENAI_API_KEY) {
-    throw new Error("Missing secret: OPENAI_API_KEY");
-  }
 }
 
 function json(data, status = 200, corsHeaders = getCorsHeaders(new Request("https://dummy.local"))) {
@@ -807,142 +804,108 @@ function normalizeAiQuestions(questions) {
   });
 }
 
-async function callOpenAiJson(env, unitTitle, rawText, answerText) {
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${env.OPENAI_API_KEY}`
-    },
-    body: JSON.stringify({
-      model: env.OPENAI_MODEL || "gpt-5-mini",
-      input: [
-        {
-          role: "system",
-          content: [{
-            type: "input_text",
-           text: `入力から問題構造を抽出してJSONで返してください。
+function pickParseSourceText(rawText, answerText) {
+  const raw = String(rawText || "");
+  const answer = String(answerText || "");
+  return raw.trim() ? raw : answer;
+}
 
-目的:
-同じ rawText / answerText 入力では毎回同一のJSONを返すこと（決定的に出力する）。
+function getTagBody(block, tagName) {
+  const m = block.match(new RegExp(`\\[${tagName}\\]\\s*([\\s\\S]*?)(?=\\n\\[[A-Z_]+(?::[^\\]]+)?\\]|$)`, "i"));
+  return m ? m[1].trim() : "";
+}
 
-構造保持ルール:
-1) 問題を勝手に統合しない。1問を case 化してまとめない。
-2) 設問番号（問1/問2/①/②/③ など）の構造を保持する。
-3) question 文の改変禁止。統合禁止。分割禁止。
-4) question / choices / answer / answers は出現順を保持する。
+function parsePipeList(text) {
+  return String(text || "")
+    .split("|")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 
-type判定ルール:
-- 「番号を選びなさい」「番号を記入」など、番号選択・番号記入を求める問題は必ず type="choice"。
-- 「〇」「×」「正しいものに〇」など○×判定を求める問題は必ず type="ox"。
-- fill_multi の blankCount は question 内の「（　　　）」個数と一致させる。
-
-case 判定ルール:
-- case は事例問題のみ
-- 利用者/事例/状況説明があり、その後に設問が続く形式のみ
-- 通常の選択問題を case にするな
-- ○×問題を case にするな
-- 番号選択問題を case にするな
-- type に迷ったら case を選ぶな
-
-厳守:
-question / choices は rawText に存在する原文の部分文字列のみ使用。
-answer / answers は answerText に存在する原文の部分文字列のみ使用。
-勝手な補完・要約・言い換え禁止。
-question に答えを混入させないこと。
-
-type は以下のみ使用:
-choice = 単一選択
-ox = ○×
-multi = 複数選択
-fill = 単一穴埋め
-fill_multi = 複数穴埋め
-combo = 複合問題
-case = 事例問題
-
-禁止:
-true_false
-single_choice
-multiple_choice
-single
-multiple
-boolean
-
-必ず ALLOWED type のみ返す。
-
-絶対ルール:
-- rawText に存在しない問題を作るな
-- 問題数を増やすな
-- 問題数を減らすな
-- 問題を分割するな
-- 問題を統合するな
-- answer が不明なら推測するな
-- answer 不明時は issues に "answer_unknown" を追加する
-- type を推測で変更するな
-- 問題文の指示を最優先する`
-          }]
-        },
-        {
-          role: "user",
-          content: [{ type: "input_text", text: `unitTitle: ${unitTitle}\n\nrawText:\n${rawText}\n\nanswerText:\n${answerText}` }]
-        }
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "dx_parse_result",
-          strict: true,
-          schema: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              unitTitle: { type: "string" },
-              questions: {
-                type: "array",
-                items: {
-                  type: "object",
-                  additionalProperties: false,
-                  properties: {
-                    id: { type: "string" },
-                    type: { type: "string" },
-                    question: { type: "string" },
-                    choices: { type: "array", items: { type: "string" } },
-                    answer: { type: "string" },
-                    answers: { type: "array", items: { type: "string" } },
-                    blankCount: { type: "integer" }
-                  },
-                  required: ["id", "type", "question", "choices", "answer", "answers", "blankCount"]
-                }
-              },
-              issues: { type: "array", items: { type: "string" } }
-            },
-            required: ["unitTitle", "questions", "issues"]
-          }
-        }
-      }
+function parseIndexedLines(sectionText) {
+  const lines = String(sectionText || "").split(/\r?\n/);
+  return lines
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const m = line.match(/^\s*\d+\s*\|\s*(.+)\s*$/);
+      return m ? m[1].trim() : "";
     })
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`OpenAI API error: ${response.status} ${text.slice(0, 240)}`);
+    .filter(Boolean);
+}
+
+function parseDeterministicDx(unitTitle, rawText, answerText) {
+  const sourceText = pickParseSourceText(rawText, answerText);
+  const blocks = sourceText
+    .split(/(?=^\[(?:TYPE:[^\]]+|CASE)\]\s*$)/m)
+    .map((b) => b.trim())
+    .filter(Boolean);
+  const caseMap = new Map();
+  const questions = [];
+  const issues = [];
+
+  for (const block of blocks) {
+    if (/^\[CASE\]/m.test(block)) {
+      const caseIdMatch = block.match(/^\[CASE_ID:([^\]]+)\]\s*$/m);
+      const caseId = caseIdMatch ? caseIdMatch[1].trim() : "";
+      const caseBody = block
+        .replace(/^\[CASE\]\s*$/m, "")
+        .replace(/^\[CASE_ID:[^\]]+\]\s*$/m, "")
+        .trim();
+      if (caseId) caseMap.set(caseId, caseBody);
+      continue;
+    }
+
+    const typeMatch = block.match(/^\[TYPE:([a-z_]+)\]\s*$/im);
+    const qidMatch = block.match(/^\[QID:([^\]]+)\]\s*$/im);
+    if (!typeMatch || !qidMatch) continue;
+
+    const type = typeMatch[1].trim();
+    const qid = qidMatch[1].trim();
+    const caseRefMatch = block.match(/^\[CASE_REF:([^\]]+)\]\s*$/im);
+    const caseRef = caseRefMatch ? caseRefMatch[1].trim() : "";
+    const baseQuestion = getTagBody(block, "問題文:");
+    const casePrefix = caseRef && caseMap.has(caseRef) ? `${caseMap.get(caseRef)}\n\n` : "";
+    const question = `${casePrefix}${baseQuestion}`.trim();
+    const answerRaw = getTagBody(block, "ANSWER");
+    const answerList = parsePipeList(answerRaw);
+
+    const item = { id: qid, type, question, choices: [], answer: "", answers: [], blankCount: 1 };
+    if (type === "fill") {
+      item.answers = answerList;
+      item.answer = answerList[0] || "";
+      item.blankCount = Math.max(1, countFillBlanks(question), item.answers.length || 1);
+    } else if (type === "fill_multi") {
+      item.answers = answerList;
+      item.blankCount = Math.max(countFillBlanks(question), item.answers.length);
+      item.answer = item.answers[0] || "";
+    } else if (type === "choice") {
+      item.choices = parseIndexedLines(getTagBody(block, "CHOICES"));
+      item.answer = answerList[0] || "";
+      item.answers = item.answer ? [item.answer] : [];
+    } else if (type === "multi") {
+      item.choices = parseIndexedLines(getTagBody(block, "CHOICES"));
+      item.answers = answerList;
+      item.answer = "";
+    } else if (type === "ox") {
+      item.choices = parseIndexedLines(getTagBody(block, "ITEMS"));
+      item.answers = String(answerRaw || "")
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+          const m = line.match(/^\s*\d+\s*\|\s*(.+)\s*$/);
+          return m ? m[1].trim() : "";
+        })
+        .filter(Boolean);
+      item.answer = "";
+      item.blankCount = item.answers.length;
+    } else {
+      issues.push(`qid:${qid}.type unsupported`);
+    }
+    questions.push(item);
   }
-  const data = await response.json();
-  console.log("OpenAI response received");
-
-  const outputText =
-    data?.output_text ||
-    data?.output?.[0]?.content?.[0]?.text?.value ||
-    data?.output?.[0]?.content?.[0]?.text ||
-    data?.output?.map(o =>
-      (o.content || [])
-        .map(c => c.text?.value || c.text || "")
-        .join("")
-    ).join("") ||
-    data?.choices?.[0]?.message?.content ||
-    "";
-
-  if (!outputText) throw new Error("OpenAI output_text missing");
-  return JSON.parse(outputText);
+  return { unitTitle, questions, issues };
 }
 
 async function handleAiParse(env, body) {
@@ -950,15 +913,9 @@ async function handleAiParse(env, body) {
   const rawText = String(body?.rawText || "");
   const answerText = String(body?.answerText || "");
   if (!unitTitle) return { ok: false, error: "invalid_request", message: "unitTitle is required" };
-  if (!rawText.trim()) return { ok: false, error: "invalid_request", message: "rawText is required" };
- 
-  let parsed;
-  try {
-    parsed = await callOpenAiJson(env, unitTitle, rawText, answerText);
-  } catch (error) {
-    return { ok: false, error: "ai_parse_failed", message: error?.message || String(error) };
-  }
+  if (!rawText.trim() && !answerText.trim()) return { ok: false, error: "invalid_request", message: "rawText or answerText is required" };
 
+  const parsed = parseDeterministicDx(unitTitle, rawText, answerText);
   const normalizedQuestions = normalizeAiQuestions(parsed?.questions);
   const issues = Array.isArray(parsed?.issues) ? [...parsed.issues] : [];
   const questions = [];
