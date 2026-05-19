@@ -816,6 +816,14 @@ type判定ルール:
 - 「〇」「×」「正しいものに〇」など○×判定を求める問題は必ず type="ox"。
 - fill_multi の blankCount は question 内の「（　　　）」個数と一致させる。
 
+case 判定ルール:
+- case は事例問題のみ
+- 利用者/事例/状況説明があり、その後に設問が続く形式のみ
+- 通常の選択問題を case にするな
+- ○×問題を case にするな
+- 番号選択問題を case にするな
+- type に迷ったら case を選ぶな
+
 厳守:
 question / choices は rawText に存在する原文の部分文字列のみ使用。
 answer / answers は answerText に存在する原文の部分文字列のみ使用。
@@ -932,8 +940,12 @@ async function handleAiParse(env, body) {
   const questions = normalizeAiQuestions(parsed?.questions);
   const issues = Array.isArray(parsed?.issues) ? [...parsed.issues] : [];
   questions.forEach((q, i) => {
-    if (!ALLOWED_TYPES.has(String(q?.type || ""))) issues.push(`q${i + 1}.type invalid`);
     const type = String(q?.type || "");
+    const questionText = String(q?.question || "");
+    if (!ALLOWED_TYPES.has(type)) issues.push(`q${i + 1}.type invalid`);
+    if (type === "case" && !/(次の事例|利用者|事例|状況説明)/.test(questionText)) {
+      issues.push(`q${i + 1}.invalid_case`);
+    }
     if (type === "fill" || type === "fill_multi") {
       const hasKnownAnswer = (Array.isArray(q?.answers) ? q.answers : []).some((v) => String(v || "").trim() !== "");
       if (!hasKnownAnswer) issues.push(`q${i + 1}.answer_unknown`);
