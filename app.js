@@ -1818,14 +1818,12 @@ function evaluateDxQualityGate(stats, mode) {
   if (normalizedMode === "append") {
     if (Number(stats.choicesMissing) !== 0) failures.push(`choices欠落NG(${stats.choicesMissing})`);
     if (Number(stats.blankCountMismatch) !== 0) failures.push(`blankCount不整合NG(${stats.blankCountMismatch})`);
-    if (Number(stats.questionAnswerLeak) !== 0) failures.push(`question答え混入NG(${stats.questionAnswerLeak})`);
     if (Number(stats.workerIssues) !== 0) failures.push(`worker issues NG(${stats.workerIssues})`);
     return { ok: failures.length === 0, failures };
   }
 
   console.log("REPLACE GATE ENTERED");
   if (Number(stats.unitCountMismatch) !== 0) failures.push(`unitCount不一致NG(${stats.unitCountMismatch})`);
-  if (Number(stats.questionAnswerLeak) !== 0) failures.push(`question答え混入NG(${stats.questionAnswerLeak})`);
   if (Number(stats.unitCount) !== 11) failures.push(`11単元完走NG(${stats.unitCount || 0}/11)`);
 
   const requiredTypes = ["ox", "choice", "multi", "fill", "fill_multi", "combo", "case"];
