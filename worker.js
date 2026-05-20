@@ -906,8 +906,15 @@ function parseDeterministicDx(unitTitle, rawText, answerText) {
     } else {
       issues.push(`qid:${qid}.type unsupported`);
     }
+    console.log({
+      rawType: type,
+      qid,
+      caseRef,
+      questionPreview: question?.slice(0, 80)
+    });
     questions.push(item);
   }
+  console.log("DX parsed count", questions.length);
   return { unitTitle, questions, issues };
 }
 
