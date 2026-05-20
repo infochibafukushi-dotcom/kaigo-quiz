@@ -1044,6 +1044,27 @@ async function saveAllImportedQuestions() {
 
   const errors = [];
   const allQuestions = [];
+  const existingQuestionIds = new Set();
+
+  try {
+    const rawExisting = await api('/api/questions?admin=1');
+    const existingDb = normalizeDatabase(rawExisting);
+    (existingDb.courses || []).forEach((course) => {
+      (course.units || []).forEach((unit) => {
+        (unit.questions || []).forEach((question) => {
+          const qid = question?.id;
+          if (qid !== undefined && qid !== null && qid !== '') {
+            existingQuestionIds.add(String(qid));
+          }
+        });
+      });
+    });
+  } catch (error) {
+    console.error('FAILED TO LOAD EXISTING QUESTION IDS', error);
+    saving = false;
+    alert(`既存問題IDの取得に失敗しました: ${error.message}`);
+    return;
+  }
 
   db.courses.forEach((course, ci) => {
     (course.units || []).forEach((unit, ui) => {
@@ -1084,8 +1105,15 @@ async function saveAllImportedQuestions() {
         unitId: resolvedUnitId
       });
 
-      const path = question.id ? `/api/questions/${question.id}` : '/api/questions';
-      const method = question.id ? 'PUT' : 'POST';
+      const questionId = question?.id;
+      const hasExistingId = questionId !== undefined && questionId !== null && questionId !== ''
+        && existingQuestionIds.has(String(questionId));
+      const path = hasExistingId ? `/api/questions/${questionId}` : '/api/questions';
+      const method = hasExistingId ? 'PUT' : 'POST';
+
+      if (method === 'POST') {
+        delete payload.id;
+      }
 
       const response = await fetch(`${API_BASE}${path}`, {
         method,
