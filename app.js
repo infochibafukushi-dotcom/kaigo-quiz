@@ -1221,113 +1221,129 @@ async function saveAllImportedQuestions() {
 
 async function saveDxImportedUnits() {
   if (saving) return;
+
   if (!dxImportState?.parsedUnits?.length) {
     throw new Error("DX解析結果がありません。");
   }
 
   saving = true;
-  const errors = [];
-  const targetCounts = new Map();
 
   try {
-    const rawExisting = await api('/api/questions?admin=1');
-    const existingDb = normalizeDatabase(rawExisting);
-    const existingBySignature = new Map();
-
-    (existingDb.courses || []).forEach((course) => {
-      (course.units || []).forEach((unit) => {
-        const unitTitle = normalizeUnitTitle(unit?.title);
-        const sigMap = new Map();
-        (unit.questions || []).forEach((question) => {
-          sigMap.set(questionSignature(question), question?.id);
-        });
-        existingBySignature.set(`${CANONICAL_COURSE_TITLE}::${unitTitle}`, sigMap);
-      });
-    });
-
     for (const parsedUnit of dxImportState.parsedUnits) {
       const unitTitle = normalizeUnitTitle(parsedUnit?.unitTitle);
+
       if (!unitTitle) continue;
 
-      const parsedQuestions = Array.isArray(parsedUnit?.questions) ? parsedUnit.questions : [];
-      targetCounts.set(unitTitle, parsedQuestions.length);
+      const parsedQuestions = Array.isArray(parsedUnit?.questions)
+        ? parsedUnit.questions
+        : [];
 
-      const sigMap = existingBySignature.get(`${CANONICAL_COURSE_TITLE}::${unitTitle}`) || new Map();
+      const ensuredUnit = await ensureUnitWithIds(
+        {
+          title: CANONICAL_COURSE_TITLE,
+          courseId: CANONICAL_COURSE_TITLE,
+          id: CANONICAL_COURSE_TITLE
+        },
+        {
+          title: unitTitle
+        }
+      );
+
+      const resolvedUnitId = ensuredUnit?.unitId ?? ensuredUnit?.id;
+
+      if (!resolvedUnitId) {
+        throw new Error(`${unitTitle}: unitId取得失敗`);
+      }
+
+      if (dxImportState.mode === "replace") {
+        const latest = await api("/api/questions?admin=1");
+        const latestDb = normalizeDatabase(latest);
+
+        const targetCourse = (latestDb.courses || []).find(
+          c => norm(c.title) === CANONICAL_COURSE_TITLE
+        );
+
+        const targetUnit = (targetCourse?.units || []).find(
+          u => normalizeUnitTitle(u.title) === unitTitle
+        );
+
+        for (const existingQuestion of (targetUnit?.questions || [])) {
+          if (existingQuestion?.id) {
+            await api(`/api/questions/${existingQuestion.id}`, {
+              method: "DELETE"
+            });
+          }
+        }
+      }
 
       for (const rawQuestion of parsedQuestions) {
-        const normalizedQuestion = normalizeQuestion(rawQuestion, CANONICAL_COURSE_TITLE, null);
-        const signature = questionSignature(normalizedQuestion);
-        const existingId = sigMap.get(signature);
-        const hasPersistentId = existingId !== undefined && existingId !== null && existingId !== "";
+        const normalizedQuestion = normalizeQuestion(
+          rawQuestion,
+          CANONICAL_COURSE_TITLE,
+          resolvedUnitId
+        );
+
+        delete normalizedQuestion.id;
 
         const payload = buildQuestionPayload(normalizedQuestion, {
           courseId: CANONICAL_COURSE_TITLE,
+          unitId: resolvedUnitId,
           unitTitle
         });
-        payload.course = CANONICAL_COURSE_TITLE;
-        payload.unit = unitTitle;
-        payload.unitTitle = unitTitle;
-        delete payload.id;
 
-        const path = hasPersistentId ? `/api/questions/${existingId}` : '/api/questions';
-        const method = hasPersistentId ? 'PUT' : 'POST';
-
-        const response = await fetch(`${API_BASE}${path}`, {
-          method,
-          headers: { 'content-type': 'application/json' },
+        const response = await fetch(`${API_BASE}/api/questions`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json"
+          },
           body: JSON.stringify(payload)
         });
 
-        const contentType = response.headers.get('content-type') || '';
-        const body = contentType.includes('application/json') ? await response.json() : await response.text();
+        const body = await response.json();
 
         if (!response.ok) {
-          const message = typeof body === 'string'
-            ? body
-            : (body?.message || body?.error || `${response.status} ${response.statusText}`);
-          throw new Error(message);
+          throw new Error(body?.message || body?.error || "POST失敗");
         }
 
         if (!body?.question) {
-          throw new Error('response.question is null');
+          throw new Error("response.question is null");
         }
       }
     }
 
-    const afterRaw = await api('/api/questions?admin=1');
+    const afterRaw = await api("/api/questions?admin=1");
     const afterDb = normalizeDatabase(afterRaw);
-    const actualCounts = new Map();
 
-    (afterDb.courses || []).forEach((course) => {
-      if (norm(course?.title) !== CANONICAL_COURSE_TITLE) return;
-      (course.units || []).forEach((unit) => {
-        const unitTitle = normalizeUnitTitle(unit?.title);
-        actualCounts.set(unitTitle, Array.isArray(unit?.questions) ? unit.questions.length : 0);
-      });
-    });
+    for (const parsedUnit of dxImportState.parsedUnits) {
+      const unitTitle = normalizeUnitTitle(parsedUnit?.unitTitle);
+      const expected = Array.isArray(parsedUnit?.questions)
+        ? parsedUnit.questions.length
+        : 0;
 
-    const mismatches = [];
-    targetCounts.forEach((expected, unitTitle) => {
-      const actual = Number(actualCounts.get(unitTitle) || 0);
-      if (actual !== Number(expected)) {
-        mismatches.push(`${unitTitle}: expected=${expected}, actual=${actual}`);
+      const course = (afterDb.courses || []).find(
+        c => norm(c.title) === CANONICAL_COURSE_TITLE
+      );
+
+      const unit = (course?.units || []).find(
+        u => normalizeUnitTitle(u.title) === unitTitle
+      );
+
+      const actual = Array.isArray(unit?.questions)
+        ? unit.questions.length
+        : 0;
+
+      if (actual !== expected) {
+        throw new Error(
+          `${unitTitle}: expected=${expected} actual=${actual}`
+        );
       }
-    });
-
-    if (mismatches.length) {
-      throw new Error(`DX保存検証エラー: ${mismatches.join(' / ')}`);
     }
 
     await loadData(true);
     renderAdmin();
-  } catch (error) {
-    errors.push(error?.message || String(error));
+
   } finally {
     saving = false;
-  }
-
-  if (errors.length) {
-    throw new Error(errors.join(' / '));
   }
 }
 
@@ -1578,7 +1594,7 @@ else if (action === "back-units") {
     }
   } else if (action === "dx-preview") {
     if (!dxImportState.previewReady) { alert("先にDXインポートを実行し、エラー0にしてください。"); return; }
-    applyDxPreviewToDb();
+ 
     renderAdmin();
     renderDxStatus();
   } else if (action === "dx-apply") {
@@ -2137,15 +2153,6 @@ function applyDxPreviewToDb() {
   courseIndex=0; unitIndex=0;
 }
 
-function questionSignature(question) {
-  const answers = Array.isArray(question.answers) ? question.answers.map((v) => norm(v)).sort().join("|") : "";
-  return [
-    norm(question.type),
-    norm(question.question),
-    norm(question.answer),
-    answers
-  ].join("::");
-}
 
 async function appendDxPreviewToDb() {
   await loadData(true);
