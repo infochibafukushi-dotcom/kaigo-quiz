@@ -678,7 +678,18 @@ function renderQuestionTypeSelector() {
 
 function renderEditQuestion(qi) {
   const unit = curUnit();
-  const question = unit?.questions?.[qi];
+
+  let question = null;
+
+  if (editingQuestionId != null) {
+    question = (unit?.questions || []).find(
+      q => String(q?.id) === String(editingQuestionId)
+    );
+  }
+
+  if (!question) {
+    question = unit?.questions?.[qi];
+  }
 
   if (!question) {
     alert("編集対象の問題が見つかりません。");
@@ -821,10 +832,10 @@ function buildQuestionPayload(question, context = {}) {
   if (unitId !== undefined && unitId !== null && unitId !== "") payload.unitId = unitId;
 
   Object.keys(payload).forEach((key) => {
-    if (payload[key] === undefined || payload[key] === null || payload[key] === "") {
-      delete payload[key];
-    }
-  });
+  if (payload[key] === undefined || payload[key] === null) {
+    delete payload[key];
+  }
+});
 
   return payload;
 }
@@ -916,9 +927,7 @@ async function saveQuestion(qi, options = {}) {
       id: CANONICAL_COURSE_TITLE
     };
 
-    const unitForEnsure = forceKaigoKatei1
-      ? { ...unit, title: "介護過程1", unitId: 10, id: 10, courseId: CANONICAL_COURSE_TITLE }
-      : unit;
+  const unitForEnsure = unit;
 
     const ensuredUnit = await ensureUnitWithIds(baseCourse, unitForEnsure);
 
@@ -927,9 +936,8 @@ async function saveQuestion(qi, options = {}) {
     }
 
     const resolvedCourseId = CANONICAL_COURSE_TITLE;
-    const resolvedUnitId = forceKaigoKatei1
-      ? 10
-      : (ensuredUnit?.unitId ?? ensuredUnit?.id ?? unit.unitId ?? unit.id ?? question.unitId);
+ const resolvedUnitId =
+  ensuredUnit?.unitId ?? ensuredUnit?.id ?? unit.unitId ?? unit.id ?? question.unitId;
 
     if (!resolvedCourseId || !resolvedUnitId) {
       console.error("SAVE BLOCKED: unit id missing", { course, unit: ensuredUnit, question });
@@ -965,9 +973,16 @@ async function saveQuestion(qi, options = {}) {
       throw new Error(`${response.status} ${response.statusText}`);
     }
 
-    await loadData(true);
-    editingQuestionId = null;
-    renderAdmin();
+await loadData(true);
+
+const questions = curUnit()?.questions || [];
+
+if (qi >= 0 && qi < questions.length) {
+  renderEditQuestion(qi);
+} else {
+  editingQuestionId = null;
+  renderAdmin();
+}
   } catch (error) {
     if (!question.id) {
       const rollbackIndex = list.indexOf(question);
@@ -1124,9 +1139,7 @@ async function saveAllImportedQuestions() {
         id: CANONICAL_COURSE_TITLE
       };
 
-      const unitForEnsure = forceKaigoKatei1
-        ? { ...unit, title: '介護過程1', unitId: 10, id: 10, courseId: CANONICAL_COURSE_TITLE }
-        : unit;
+    const unitForEnsure = unit;
 
       const ensuredUnit = await ensureUnitWithIds(baseCourse, unitForEnsure);
 
@@ -1136,7 +1149,7 @@ async function saveAllImportedQuestions() {
       unit = ensuredUnit;
 
       const resolvedCourseId = CANONICAL_COURSE_TITLE;
-      const resolvedUnitId = forceKaigoKatei1 ? 10 : (unit?.unitId ?? unit?.id ?? question.unitId);
+ const resolvedUnitId = unit?.unitId ?? unit?.id ?? question.unitId;
 
       if (!resolvedCourseId || !resolvedUnitId) {
         throw new Error('courseId/unitId missing');
