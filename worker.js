@@ -835,85 +835,90 @@ function parseIndexedLines(sectionText) {
 }
 
 function parseDeterministicDx(unitTitle, rawText, answerText) {
-  const sourceText = pickParseSourceText(rawText, answerText);
-  const blockPattern = /^\[(?:TYPE:[^\]]+|CASE)\][\s\S]*?(?=^\[(?:TYPE:[^\]]+|CASE)\]|$)/gm;
-  const blocks = (sourceText.match(blockPattern) || [])
-    .map((b) => b.trim())
-    .filter(Boolean);
-  const caseMap = new Map();
+  const sourceText = pickParseSourceText(rawText, answerText).replace(/\r/g, "");
   const questions = [];
   const issues = [];
+  const caseMap = new Map();
 
-  for (const block of blocks) {
-    if (/^\[CASE\]/m.test(block)) {
-      const caseIdMatch = block.match(/^\[CASE_ID:([^\]]+)\]\s*$/m);
-      const caseId = caseIdMatch ? caseIdMatch[1].trim() : "";
-      const caseBody = block
-        .replace(/^\[CASE\]\s*$/m, "")
-        .replace(/^\[CASE_ID:[^\]]+\]\s*$/m, "")
+  function pushQuestion(q) {
+    const fullQuestion =
+      ((q.caseRef && caseMap.has(q.caseRef))
+        ? caseMap.get(q.caseRef) + "\n\n"
+        : "") + (q.question || "");
+
+    const item = {
+      id: q.qid || `q${questions.length + 1}`,
+      type: q.type,
+      question: fullQuestion.trim(),
+      choices: [],
+      answer: "",
+      answers: [],
+      blankCount: 1
+    };
+
+    const answerList = parsePipeList(q.answer || "");
+
+    if (q.type === "fill" || q.type === "fill_multi") {
+      item.answers = answerList;
+      item.answer = answerList[0] || "";
+      item.blankCount = Math.max(
+        1,
+        countFillBlanks(item.question),
+        item.answers.length || 1
+      );
+    } else if (q.type === "choice") {
+      item.choices = parseIndexedLines(q.choices || "");
+      item.answer = answerList[0] || "";
+      item.answers = item.answer ? [item.answer] : [];
+    } else if (q.type === "multi") {
+      item.choices = parseIndexedLines(q.choices || "");
+      item.answers = answerList;
+    } else if (q.type === "ox") {
+      item.choices = parseIndexedLines(q.items || "");
+      item.answers = answerList;
+      item.blankCount = Math.max(1, item.answers.length || item.choices.length);
+    }
+　
+    questions.push(item);
+  }
+
+  const deterministicBlocks = sourceText
+　.split(/(?=\[(?:TYPE:[^\]]+|CASE)\])/)
+    .map(v => v.trim())
+    .filter(Boolean);
+
+  for (const block of deterministicBlocks) {
+    if (block.startsWith("[CASE]")) {
+      const caseId = (block.match(/\[CASE_ID:([^\]]+)\]/) || [, ""])[1].trim();
+      const body = block
+        .replace(/^\[CASE\]\s*/m, "")
+        .replace(/^\[CASE_ID:[^\]]+\]\s*/m, "")
         .trim();
-      if (caseId) caseMap.set(caseId, caseBody);
+
+      if (caseId) caseMap.set(caseId, body);
+  
       continue;
     }
 
-    const typeMatch = block.match(/^\[TYPE:([a-z_]+)\]\s*$/im);
-    const qidMatch = block.match(/^\[QID:([^\]]+)\]\s*$/im);
-    if (!typeMatch || !qidMatch) continue;
+    const type = (block.match(/\[TYPE:([^\]]+)\]/) || [, ""])[1].trim();
+    const qid = (block.match(/\[QID:([^\]]+)\]/) || [, ""])[1].trim();
+    if (!type) continue;
+    const caseRef = (block.match(/\[CASE_REF:([^\]]+)\]/) || [, ""])[1].trim();
 
-    const type = typeMatch[1].trim();
-    const qid = qidMatch[1].trim();
-    const caseRefMatch = block.match(/^\[CASE_REF:([^\]]+)\]\s*$/im);
-    const caseRef = caseRefMatch ? caseRefMatch[1].trim() : "";
-    const questionMatch = block.match(
-      /問題文:\s*([\s\S]*?)(?=\n\[(?:CHOICES|ITEMS|ANSWER|TYPE:[^\]]+|CASE)\]|\s*$)/
-    );
-    const baseQuestion = questionMatch ? questionMatch[1].trim() : "";
-    const casePrefix = caseRef && caseMap.has(caseRef) ? `${caseMap.get(caseRef)}\n\n` : "";
-    const question = `${casePrefix}${baseQuestion}`.trim();
-    const answerRaw = getTagBody(block, "ANSWER");
-    const answerList = parsePipeList(answerRaw);
+    const question =
+      (block.match(/問題文:\s*([\s\S]*?)(?=\n\[(?:CHOICES|ITEMS|ANSWER)\]|$)/) || [, ""])[1].trim();
 
-    const item = { id: qid, type, question, choices: [], answer: "", answers: [], blankCount: 1 };
-    if (type === "fill") {
-      item.answers = answerList;
-      item.answer = answerList[0] || "";
-      item.blankCount = Math.max(1, countFillBlanks(question), item.answers.length || 1);
-    } else if (type === "fill_multi") {
-      item.answers = answerList;
-      item.blankCount = Math.max(countFillBlanks(question), item.answers.length);
-      item.answer = item.answers[0] || "";
-    } else if (type === "choice") {
-      item.choices = parseIndexedLines(getTagBody(block, "CHOICES"));
-      item.answer = answerList[0] || "";
-      item.answers = item.answer ? [item.answer] : [];
-    } else if (type === "multi") {
-      item.choices = parseIndexedLines(getTagBody(block, "CHOICES"));
-      item.answers = answerList;
-      item.answer = "";
-    } else if (type === "ox") {
-      item.choices = parseIndexedLines(getTagBody(block, "ITEMS"));
-      item.answers = String(answerRaw || "")
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line) => {
-          const m = line.match(/^\s*\d+\s*\|\s*(.+)\s*$/);
-          return m ? m[1].trim() : "";
-        })
-        .filter(Boolean);
-      item.answer = "";
-      item.blankCount = item.answers.length;
-    } else {
-      issues.push(`qid:${qid}.type unsupported`);
-    }
-    console.log({
-      rawType: type,
+    pushQuestion({
+      type,
       qid,
       caseRef,
-      questionPreview: question?.slice(0, 80)
+      question,
+      choices: getTagBody(block, "CHOICES"),
+      items: getTagBody(block, "ITEMS"),
+      answer: getTagBody(block, "ANSWER")
     });
-    questions.push(item);
   }
+
   console.log("DX parsed count", questions.length);
   return { unitTitle, questions, issues };
 }
@@ -924,7 +929,11 @@ async function handleAiParse(env, body) {
   const answerText = String(body?.answerText || "");
   if (!unitTitle) return { ok: false, error: "invalid_request", message: "unitTitle is required" };
   if (!rawText.trim() && !answerText.trim()) return { ok: false, error: "invalid_request", message: "rawText or answerText is required" };
-
+console.log("RAW LEN", rawText.length);
+console.log("ANSWER LEN", answerText.length);
+console.log("RAW HEAD", rawText.slice(0, 500));
+console.log("RAW TAIL", rawText.slice(-1000));
+console.log("RAW FULL", rawText);
   const parsed = parseDeterministicDx(unitTitle, rawText, answerText);
   const normalizedQuestions = normalizeAiQuestions(parsed?.questions);
   const issues = Array.isArray(parsed?.issues) ? [...parsed.issues] : [];
