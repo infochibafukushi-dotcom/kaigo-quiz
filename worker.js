@@ -874,9 +874,31 @@ function parseDeterministicDx(unitTitle, rawText, answerText) {
       item.choices = parseIndexedLines(q.choices || "");
       item.answers = answerList;
     } else if (q.type === "ox") {
-      item.choices = parseIndexedLines(q.items || "");
+      const itemTexts = parseIndexedLines(q.items || "");
+      const oxAnswers = parsePipeList(q.answer || "");
+      const pairCount = Math.min(itemTexts.length, oxAnswers.length);
+      if (pairCount > 0) {
+        for (let i = 0; i < pairCount; i++) {
+          const oxQuestionText = itemTexts[i];
+          const oxAnswer = oxAnswers[i];
+          if (!oxQuestionText || !oxAnswer) continue;
+          questions.push({
+            id: q.qid ? `${q.qid}-${i + 1}` : `q${questions.length + 1}`,
+            type: "ox",
+            question: (((q.caseRef && caseMap.has(q.caseRef))
+              ? caseMap.get(q.caseRef) + "\n\n"
+              : "") + oxQuestionText).trim(),
+            choices: [],
+            answer: oxAnswer,
+            answers: [oxAnswer],
+            blankCount: 1
+          });
+        }
+        return;
+      }
       item.answers = answerList;
-      item.blankCount = Math.max(1, item.answers.length || item.choices.length);
+      item.answer = answerList[0] || "";
+      item.blankCount = 1;
     }
 　
     questions.push(item);
