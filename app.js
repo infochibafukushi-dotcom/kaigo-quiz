@@ -792,41 +792,29 @@ async function applyEditorToQuestion(question) {
 }
 
 function buildQuestionPayload(question, context = {}) {
-  const rawImage = String(question.imageData || "").trim();
-  const unitTitle = normalizeUnitTitle(
-    context.unitTitle ?? context.unit ?? context.title ?? question.unit ?? question.unitTitle ?? ""
-  );
-
-  const payload = {
-    id: question.id,
-    type: norm(question.type || "fill"),
-    question: norm(question.question),
-    choices: Array.isArray(question.choices) ? question.choices.map(norm).filter(Boolean) : [],
-    answers: Array.isArray(question.answers) ? question.answers.map(norm) : [],
-    answer: norm(question.answer),
-    explanation: norm(question.explanation),
-    imageUrl: rawImage,
-    imageData: rawImage,
-    blankCount: Math.max(1, Number(question.blankCount) || 1),
-    course: CANONICAL_COURSE_TITLE,
-    unit: unitTitle,
-    unitTitle,
-    title: unitTitle
-  };
-
+  const unitTitle = normalizeUnitTitle(context.unitTitle ?? context.unit ?? context.title ?? question.unitTitle ?? question.unit ?? "");
+  const rawImage = String(question.imageData || question.imageUrl || "").trim();
   const courseId = context.courseId ?? question.courseId;
   const unitId = context.unitId ?? question.unitId;
 
-  if (courseId !== undefined && courseId !== null && courseId !== "") payload.courseId = courseId;
-  if (unitId !== undefined && unitId !== null && unitId !== "") payload.unitId = unitId;
-
-  Object.keys(payload).forEach((key) => {
-    if (payload[key] === undefined || payload[key] === null || payload[key] === "") {
-      delete payload[key];
-    }
-  });
-
-  return payload;
+  return {
+    id: question.id,
+    course: CANONICAL_COURSE_TITLE,
+    courseId,
+    unit: unitTitle,
+    unitId,
+    unitTitle,
+    title: unitTitle,
+    type: norm(question.type || "fill"),
+    question: norm(question.question),
+    choices: Array.isArray(question.choices) ? question.choices.map(norm).filter(Boolean) : [],
+    answers: Array.isArray(question.answers) ? question.answers.map(norm).filter(Boolean) : [],
+    answer: norm(question.answer),
+    blankCount: Math.max(1, Number(question.blankCount) || 1),
+    imageUrl: rawImage,
+    imageData: rawImage,
+    explanation: norm(question.explanation)
+  };
 }
 
 async function ensureUnitWithIds(course, unit) {
@@ -883,58 +871,31 @@ async function saveQuestion(qi, options = {}) {
     return;
   }
 
-  const fixedType = question.type;
-  const fixedBlankCount = question.blankCount;
-  const fixedAnswers = Array.isArray(question.answers) ? question.answers.slice() : [];
+  const snapshot = JSON.parse(JSON.stringify(question));
 
   try {
     await applyEditorToQuestion(question);
   } catch (error) {
+    Object.assign(question, snapshot);
     alert(error?.message || "入力内容に不備があります。");
     return;
   }
 
-  if (editingQuestionId != null && question.type !== fixedType) {
-    question.type = fixedType;
-    if (isMultiBlankType(fixedType)) {
-      question.blankCount = fixedBlankCount;
-      question.answers = fixedAnswers;
-    }
-  }
-
   saving = true;
-
   try {
     const course = curCourse();
-    const normalizedTitle = normalizeUnitTitle(unit.title);
-    const forceKaigoKatei1 = normalizedTitle === "介護過程1";
+    const ensuredUnit = await ensureUnitWithIds(course, unit);
+    const resolvedCourseId = ensuredUnit?.courseId ?? course?.courseId ?? course?.id;
+    const resolvedUnitId = ensuredUnit?.unitId ?? ensuredUnit?.id;
 
-    const baseCourse = {
-      ...course,
-      title: CANONICAL_COURSE_TITLE,
-      courseId: CANONICAL_COURSE_TITLE,
-      id: CANONICAL_COURSE_TITLE
-    };
-
-    const unitForEnsure = forceKaigoKatei1
-      ? { ...unit, title: "介護過程1", unitId: 10, id: 10, courseId: CANONICAL_COURSE_TITLE }
-      : unit;
-
-    const ensuredUnit = await ensureUnitWithIds(baseCourse, unitForEnsure);
+    if (!resolvedUnitId) {
+      Object.assign(question, snapshot);
+      alert("保存先単元IDがありません。先に単元を作成してください。");
+      return;
+    }
 
     if (course?.units?.[unitIndex]) {
       course.units[unitIndex] = ensuredUnit;
-    }
-
-    const resolvedCourseId = CANONICAL_COURSE_TITLE;
-    const resolvedUnitId = forceKaigoKatei1
-      ? 10
-      : (ensuredUnit?.unitId ?? ensuredUnit?.id ?? unit.unitId ?? unit.id ?? question.unitId);
-
-    if (!resolvedCourseId || !resolvedUnitId) {
-      console.error("SAVE BLOCKED: unit id missing", { course, unit: ensuredUnit, question });
-      alert("保存先単元IDがありません。単元を作成し直してください。");
-      return;
     }
 
     question.courseId = resolvedCourseId;
@@ -943,15 +904,12 @@ async function saveQuestion(qi, options = {}) {
     const payload = buildQuestionPayload(question, {
       courseId: resolvedCourseId,
       unitId: resolvedUnitId,
-      unitTitle: forceKaigoKatei1 ? "介護過程1" : normalizeUnitTitle(ensuredUnit?.title || unit.title)
+      unitTitle: ensuredUnit?.title || unit.title
     });
 
-    if (!payload.courseId || !payload.unitId) {
-      throw new Error("新規問題の保存先(courseId/unitId)が不正です。");
-    }
-
-    const path = question.id ? `/api/questions/${question.id}` : "/api/questions";
-    const method = question.id ? "PUT" : "POST";
+    const isExisting = question.id !== undefined && question.id !== null && question.id !== "";
+    const path = isExisting ? `/api/questions/${question.id}` : "/api/questions";
+    const method = isExisting ? "PUT" : "POST";
 
     const response = await fetch(`${API_BASE}${path}`, {
       method,
@@ -959,19 +917,24 @@ async function saveQuestion(qi, options = {}) {
       body: JSON.stringify(payload)
     });
 
-    const text = await response.text();
+    const body = await response.json().catch(() => null);
     if (!response.ok) {
-      console.error(text);
-      throw new Error(`${response.status} ${response.statusText}`);
+      throw new Error(body?.message || body?.error || `${response.status} ${response.statusText}`);
+    }
+
+    if (!isExisting) {
+      const newId = body?.question?.id ?? body?.id;
+      if (newId !== undefined && newId !== null) question.id = newId;
     }
 
     await loadData(true);
     editingQuestionId = null;
     renderAdmin();
   } catch (error) {
-    if (!question.id) {
-      const rollbackIndex = list.indexOf(question);
-      if (rollbackIndex >= 0) list.splice(rollbackIndex, 1);
+    Object.assign(question, snapshot);
+    if (options.question && !snapshot.id) {
+      const idx = list.indexOf(question);
+      if (idx >= 0) list.splice(idx, 1);
     }
     alert(`保存エラー: ${error.message}`);
   } finally {
@@ -991,13 +954,6 @@ async function createQuestion(type) {
     courseId: curCourse()?.courseId ?? curCourse()?.id,
     unitId: curUnit()?.unitId ?? curUnit()?.id
   });
-
-  try {
-    await applyEditorToQuestion(question);
-  } catch (error) {
-    alert(error?.message || "入力内容に不備があります。");
-    return;
-  }
 
   await saveQuestion(-1, { question });
 }
@@ -1068,269 +1024,150 @@ function updateAnswerInputsByBlankCount() {
 
 async function saveAllImportedQuestions() {
   if (saving) return;
-
-  console.log("IMPORT SAVE START");
   saving = true;
 
-  const errors = [];
-  const allQuestions = [];
-  const existingQuestionIds = new Set();
-
   try {
-    const rawExisting = await api('/api/questions?admin=1');
-    const existingDb = normalizeDatabase(rawExisting);
-    (existingDb.courses || []).forEach((course) => {
+    const allQuestions = [];
+    db.courses.forEach((course) => {
       (course.units || []).forEach((unit) => {
         (unit.questions || []).forEach((question) => {
-          const qid = question?.id;
-          if (qid !== undefined && qid !== null && qid !== '') {
-            existingQuestionIds.add(String(qid));
-          }
+          allQuestions.push({ course, unit, question });
         });
       });
     });
-  } catch (error) {
-    console.error('FAILED TO LOAD EXISTING QUESTION IDS', error);
-    saving = false;
-    alert(`既存問題IDの取得に失敗しました: ${error.message}`);
-    return;
-  }
 
-  db.courses.forEach((course, ci) => {
-    (course.units || []).forEach((unit, ui) => {
-      (unit.questions || []).forEach((question, qi) => {
-        allQuestions.push({ course, unit, question, ci, ui, qi });
-      });
-    });
-  });
-
-  const total = allQuestions.length;
-
-  for (let i = 0; i < total; i += 1) {
-    const item = allQuestions[i];
-    const { course, question } = item;
-    let { unit } = item;
-
-    console.log(`SAVING QUESTION ${i + 1}/${total}`);
-
-    try {
-      const normalizedTitle = normalizeUnitTitle(unit?.title);
-      const forceKaigoKatei1 = normalizedTitle === '介護過程1';
-
-      const baseCourse = {
-        ...course,
-        title: CANONICAL_COURSE_TITLE,
-        courseId: CANONICAL_COURSE_TITLE,
-        id: CANONICAL_COURSE_TITLE
-      };
-
-      const unitForEnsure = forceKaigoKatei1
-        ? { ...unit, title: '介護過程1', unitId: 10, id: 10, courseId: CANONICAL_COURSE_TITLE }
-        : unit;
-
-      const ensuredUnit = await ensureUnitWithIds(baseCourse, unitForEnsure);
-
-      if (course?.units?.[item.ui]) {
-        course.units[item.ui] = ensuredUnit;
+    for (const item of allQuestions) {
+      const ensuredUnit = await ensureUnitWithIds(item.course, item.unit);
+      const resolvedUnitId = ensuredUnit?.unitId ?? ensuredUnit?.id;
+      if (!resolvedUnitId) {
+        throw new Error(`unitId未確定: ${normalizeUnitTitle(item.unit?.title || "")}`);
       }
-      unit = ensuredUnit;
-
-      const resolvedCourseId = CANONICAL_COURSE_TITLE;
-      const resolvedUnitId = forceKaigoKatei1 ? 10 : (unit?.unitId ?? unit?.id ?? question.unitId);
-
-      if (!resolvedCourseId || !resolvedUnitId) {
-        throw new Error('courseId/unitId missing');
-      }
-
-      question.courseId = resolvedCourseId;
-      question.unitId = resolvedUnitId;
-
-      const payload = buildQuestionPayload(question, {
-        courseId: resolvedCourseId,
+      const payload = buildQuestionPayload(item.question, {
+        courseId: ensuredUnit?.courseId ?? item.course?.courseId ?? item.course?.id,
         unitId: resolvedUnitId,
-        unitTitle: forceKaigoKatei1 ? '介護過程1' : normalizeUnitTitle(unit?.title)
+        unitTitle: ensuredUnit?.title || item.unit?.title
       });
 
-      const questionId = question?.id;
-      const hasExistingId = questionId !== undefined && questionId !== null && questionId !== ''
-        && existingQuestionIds.has(String(questionId));
-      const path = hasExistingId ? `/api/questions/${questionId}` : '/api/questions';
-      const method = hasExistingId ? 'PUT' : 'POST';
-
-      if (method === 'POST') {
-        delete payload.id;
-      }
+      const isExisting = item.question?.id !== undefined && item.question?.id !== null && item.question?.id !== "";
+      const path = isExisting ? `/api/questions/${item.question.id}` : "/api/questions";
+      const method = isExisting ? "PUT" : "POST";
 
       const response = await fetch(`${API_BASE}${path}`, {
         method,
-        headers: { 'content-type': 'application/json' },
+        headers: { "content-type": "application/json" },
         body: JSON.stringify(payload)
       });
 
-      const contentType = response.headers.get('content-type') || '';
-      const body = contentType.includes('application/json') ? await response.json() : await response.text();
-
       if (!response.ok) {
-        const message = typeof body === 'string'
-          ? body
-          : (body?.message || body?.error || `${response.status} ${response.statusText}`);
-        throw new Error(message);
+        const txt = await response.text();
+        throw new Error(txt || `${response.status} ${response.statusText}`);
       }
-
-      const savedId = body?.question?.id ?? body?.id ?? question.id ?? '(unknown)';
-      if (!question.id && (body?.question?.id || body?.id)) {
-        question.id = body?.question?.id ?? body?.id;
-      }
-      console.log(`SAVED QUESTION ID ${savedId}`);
-    } catch (error) {
-      console.error('IMPORT SAVE ERROR', {
-        index: i + 1,
-        total,
-        error: error?.message || String(error),
-        courseTitle: course?.title || '',
-        unitTitle: unit?.title || '',
-        question: question?.question || ''
-      });
-      errors.push({
-        index: i + 1,
-        message: error?.message || String(error),
-        courseTitle: course?.title || '',
-        unitTitle: unit?.title || ''
-      });
     }
-  }
 
-  console.log('IMPORT SAVE COMPLETE');
-
-  try {
     await loadData(true);
     renderAdmin();
+    alert("JSON保存が完了しました。");
   } catch (error) {
-    console.error(error);
+    alert(`JSON保存エラー: ${error.message}`);
+  } finally {
+    saving = false;
   }
-
-  saving = false;
-
-  if (errors.length) {
-    alert(`JSON保存完了（一部失敗: ${errors.length}件）。コンソールを確認してください。`);
-    return;
-  }
-
-  alert('JSON保存が完了しました。');
 }
 
 async function saveDxImportedUnits() {
   if (saving) return;
-  if (!dxImportState?.parsedUnits?.length) {
-    throw new Error("DX解析結果がありません。");
-  }
+  if (!dxImportState?.parsedUnits?.length) throw new Error("DX解析結果がありません。");
 
   saving = true;
-  const errors = [];
-  const targetCounts = new Map();
-
   try {
-    const rawExisting = await api('/api/questions?admin=1');
-    const existingDb = normalizeDatabase(rawExisting);
-    const existingBySignature = new Map();
-
-    (existingDb.courses || []).forEach((course) => {
+    const beforeRaw = await api("/api/questions?admin=1");
+    const beforeDb = normalizeDatabase(beforeRaw);
+    const beforeCounts = new Map();
+    (beforeDb.courses || []).forEach((course) => {
+      if (norm(course?.title) !== CANONICAL_COURSE_TITLE) return;
       (course.units || []).forEach((unit) => {
-        const unitTitle = normalizeUnitTitle(unit?.title);
-        const sigMap = new Map();
-        (unit.questions || []).forEach((question) => {
-          sigMap.set(questionSignature(question), question?.id);
-        });
-        existingBySignature.set(`${CANONICAL_COURSE_TITLE}::${unitTitle}`, sigMap);
+        beforeCounts.set(
+          normalizeUnitTitle(unit?.title),
+          Array.isArray(unit?.questions) ? unit.questions.length : 0
+        );
       });
     });
 
+    const expectedCounts = new Map();
     for (const parsedUnit of dxImportState.parsedUnits) {
       const unitTitle = normalizeUnitTitle(parsedUnit?.unitTitle);
       if (!unitTitle) continue;
-
       const parsedQuestions = Array.isArray(parsedUnit?.questions) ? parsedUnit.questions : [];
-      targetCounts.set(unitTitle, parsedQuestions.length);
+      const beforeCount = Number(beforeCounts.get(unitTitle) || 0);
+      const expected = dxImportState.mode === "append" ? (beforeCount + parsedQuestions.length) : parsedQuestions.length;
+      expectedCounts.set(unitTitle, expected);
 
-      const sigMap = existingBySignature.get(`${CANONICAL_COURSE_TITLE}::${unitTitle}`) || new Map();
+      const course = curCourse() || { title: CANONICAL_COURSE_TITLE, courseId: CANONICAL_COURSE_TITLE, id: CANONICAL_COURSE_TITLE };
+      const ensuredUnit = await ensureUnitWithIds(course, { title: unitTitle, courseId: course.courseId || course.id });
+      const resolvedUnitId = ensuredUnit?.unitId ?? ensuredUnit?.id;
+      if (!resolvedUnitId) throw new Error(`unitId未確定: ${unitTitle}`);
+
+      if (dxImportState.mode === "replace") {
+        const beforeRaw = await api('/api/questions?admin=1');
+        const beforeDb = normalizeDatabase(beforeRaw);
+        const deleteTargets = [];
+        (beforeDb.courses || []).forEach((c) => {
+          if (norm(c?.title) !== CANONICAL_COURSE_TITLE) return;
+          (c.units || []).forEach((u) => {
+            if (normalizeUnitTitle(u?.title) !== unitTitle) return;
+            (u.questions || []).forEach((q) => {
+              if (q?.id !== undefined && q?.id !== null && q?.id !== "") deleteTargets.push(q.id);
+            });
+          });
+        });
+        for (const qid of deleteTargets) {
+          await api(`/api/questions/${qid}`, { method: "DELETE" });
+        }
+      }
 
       for (const rawQuestion of parsedQuestions) {
-        const normalizedQuestion = normalizeQuestion(rawQuestion, CANONICAL_COURSE_TITLE, null);
-        const signature = questionSignature(normalizedQuestion);
-        const existingId = sigMap.get(signature);
-        const hasPersistentId = existingId !== undefined && existingId !== null && existingId !== "";
-
+        const normalizedQuestion = normalizeQuestion(rawQuestion, CANONICAL_COURSE_TITLE, resolvedUnitId);
         const payload = buildQuestionPayload(normalizedQuestion, {
           courseId: CANONICAL_COURSE_TITLE,
+          unitId: resolvedUnitId,
           unitTitle
         });
-        payload.course = CANONICAL_COURSE_TITLE;
-        payload.unit = unitTitle;
-        payload.unitTitle = unitTitle;
         delete payload.id;
 
-        const path = hasPersistentId ? `/api/questions/${existingId}` : '/api/questions';
-        const method = hasPersistentId ? 'PUT' : 'POST';
-
-        const response = await fetch(`${API_BASE}${path}`, {
-          method,
-          headers: { 'content-type': 'application/json' },
+        const response = await fetch(`${API_BASE}/api/questions`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
           body: JSON.stringify(payload)
         });
 
-        const contentType = response.headers.get('content-type') || '';
-        const body = contentType.includes('application/json') ? await response.json() : await response.text();
-
         if (!response.ok) {
-          const message = typeof body === 'string'
-            ? body
-            : (body?.message || body?.error || `${response.status} ${response.statusText}`);
-          throw new Error(message);
-        }
-
-        if (!body?.question) {
-          throw new Error('response.question is null');
+          const text = await response.text();
+          throw new Error(text || `${response.status} ${response.statusText}`);
         }
       }
     }
 
     const afterRaw = await api('/api/questions?admin=1');
     const afterDb = normalizeDatabase(afterRaw);
-    const actualCounts = new Map();
-
-    (afterDb.courses || []).forEach((course) => {
-      if (norm(course?.title) !== CANONICAL_COURSE_TITLE) return;
-      (course.units || []).forEach((unit) => {
-        const unitTitle = normalizeUnitTitle(unit?.title);
-        actualCounts.set(unitTitle, Array.isArray(unit?.questions) ? unit.questions.length : 0);
+    for (const [unitTitle, expected] of expectedCounts.entries()) {
+      let actual = 0;
+      (afterDb.courses || []).forEach((c) => {
+        if (norm(c?.title) !== CANONICAL_COURSE_TITLE) return;
+        (c.units || []).forEach((u) => {
+          if (normalizeUnitTitle(u?.title) === unitTitle) {
+            actual = Array.isArray(u?.questions) ? u.questions.length : 0;
+          }
+        });
       });
-    });
-
-    const mismatches = [];
-    targetCounts.forEach((expected, unitTitle) => {
-      const actual = Number(actualCounts.get(unitTitle) || 0);
-      if (actual !== Number(expected)) {
-        mismatches.push(`${unitTitle}: expected=${expected}, actual=${actual}`);
-      }
-    });
-
-    if (mismatches.length) {
-      throw new Error(`DX保存検証エラー: ${mismatches.join(' / ')}`);
+      if (expected !== actual) throw new Error(`件数不一致: ${unitTitle} expected=${expected} actual=${actual}`);
     }
 
     await loadData(true);
     renderAdmin();
-  } catch (error) {
-    errors.push(error?.message || String(error));
   } finally {
     saving = false;
   }
-
-  if (errors.length) {
-    throw new Error(errors.join(' / '));
-  }
 }
-
 
 document.addEventListener("click", async (event) => {
   const target = event.target.closest("[data-act]");
@@ -1578,8 +1415,6 @@ else if (action === "back-units") {
     }
   } else if (action === "dx-preview") {
     if (!dxImportState.previewReady) { alert("先にDXインポートを実行し、エラー0にしてください。"); return; }
-    applyDxPreviewToDb();
-    renderAdmin();
     renderDxStatus();
   } else if (action === "dx-apply") {
     if (dxImportState.loading) return;
@@ -2125,51 +1960,6 @@ function renderDxStatus() {
     ? `${esc(dxImportState.resultMessage)}<br>`
     : "";
   box.innerHTML = `${loadingText}${resultText}取込単元: ${unitCount} / 問題数: ${qCount}${metrics}<br>${dxImportState.repairLogs.map(esc).join('<br>')}${dxImportState.errors.length ? `<br>ERROR: ${esc(dxImportState.errors.join('; '))}` : ''}`;
-}
-
-function applyDxPreviewToDb() {
-  const course = db.courses[0] || { id:null, courseId:null, title: CANONICAL_COURSE_TITLE, units: [] };
-  course.units = CANONICAL_UNITS.map((title) => {
-    const found = dxImportState.parsedUnits.find((u) => normalizeUnitTitle(u.unitTitle) === title);
-    return { id:null, unitId:null, title, isVisible:true, questions:(found?.questions || []).map((q)=>normalizeQuestion(q, course.courseId??course.id, null)) };
-  });
-  db.courses = [course];
-  courseIndex=0; unitIndex=0;
-}
-
-function questionSignature(question) {
-  const answers = Array.isArray(question.answers) ? question.answers.map((v) => norm(v)).sort().join("|") : "";
-  return [
-    norm(question.type),
-    norm(question.question),
-    norm(question.answer),
-    answers
-  ].join("::");
-}
-
-async function appendDxPreviewToDb() {
-  await loadData(true);
-  const course = db.courses[0] || { id: null, courseId: null, title: CANONICAL_COURSE_TITLE, units: [] };
-  if (!db.courses[0]) db.courses[0] = course;
-  for (const parsedUnit of dxImportState.parsedUnits) {
-    const unitTitle = normalizeUnitTitle(parsedUnit.unitTitle);
-    let unit = (course.units || []).find((u) => normalizeUnitTitle(u.title) === unitTitle);
-    if (!unit) {
-      unit = { id: null, unitId: null, title: unitTitle, isVisible: true, questions: [] };
-      course.units.push(unit);
-    }
-    const existingSet = new Set((unit.questions || []).map((q) => questionSignature(q)));
-    const toAppend = [];
-    for (const question of (parsedUnit.questions || [])) {
-      const normalizedQuestion = normalizeQuestion(question, course.courseId ?? course.id, unit.unitId ?? unit.id);
-      const signature = questionSignature(normalizedQuestion);
-      if (existingSet.has(signature)) continue;
-      existingSet.add(signature);
-      toAppend.push(normalizedQuestion);
-    }
-    unit.questions = [...(unit.questions || []), ...toAppend];
-  }
-  course.units = sortUnitsByCanonicalOrder(course.units || []);
 }
 
 (async function init() {
