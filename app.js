@@ -793,6 +793,7 @@ async function applyEditorToQuestion(question) {
 
 function buildQuestionPayload(question, context = {}) {
   const rawImage = String(question.imageData || "").trim();
+  const unitTitle = normalizeUnitTitle(context.unitTitle ?? context.unit ?? context.title ?? question.unit ?? question.unitTitle ?? "");
   const payload = {
     id: question.id,
     type: norm(question.type || "fill"),
@@ -803,17 +804,21 @@ function buildQuestionPayload(question, context = {}) {
     explanation: norm(question.explanation),
     imageUrl: rawImage,
     imageData: rawImage,
-    blankCount: Math.max(1, Number(question.blankCount) || 1)
+    blankCount: Math.max(1, Number(question.blankCount) || 1),
+    course: CANONICAL_COURSE_TITLE,
+    unit: unitTitle,
+    unitTitle,
+    title: unitTitle
   };
 
- const courseId = context.courseId ?? question.courseId;
-const unitId = context.unitId ?? question.unitId;
+  const courseId = context.courseId ?? question.courseId;
+  const unitId = context.unitId ?? question.unitId;
 
   if (courseId !== undefined && courseId !== null && courseId !== "") payload.courseId = courseId;
   if (unitId !== undefined && unitId !== null && unitId !== "") payload.unitId = unitId;
 
   Object.keys(payload).forEach((key) => {
-    if (payload[key] === undefined || payload[key] === null) {
+    if (payload[key] === undefined || payload[key] === null || payload[key] === "") {
       delete payload[key];
     }
   });
@@ -854,7 +859,7 @@ async function ensureUnitWithIds(course, unit) {
   };
 }
 
-async function saveQuestion(qi) {
+async function saveQuestion(qi, options = {}) {
   if (saving) return;
 
   const unit = curUnit();
@@ -864,9 +869,9 @@ async function saveQuestion(qi) {
   }
 
   const list = unit.questions || [];
-  const question = (editingQuestionId != null
+  const question = options.question || ((editingQuestionId != null
     ? list.find((item) => String(item?.id) === String(editingQuestionId))
-    : null) || list[qi];
+    : null) || list[qi]);
 
   if (!question) {
     alert("保存対象の問題が見つかりません。");
@@ -896,14 +901,21 @@ async function saveQuestion(qi) {
 
   try {
     const course = curCourse();
-    const ensuredUnit = await ensureUnitWithIds(course, unit);
+    const normalizedTitle = normalizeUnitTitle(unit.title);
+    const baseCourse = { ...course, title: CANONICAL_COURSE_TITLE, courseId: CANONICAL_COURSE_TITLE, id: CANONICAL_COURSE_TITLE };
+    const unitForEnsure = normalizedTitle === "介護過程1"
+      ? { ...unit, title: "介護過程1", unitId: 10, id: 10, courseId: CANONICAL_COURSE_TITLE }
+      : unit;
+    const ensuredUnit = await ensureUnitWithIds(baseCourse, unitForEnsure);
 
     if (course?.units?.[unitIndex]) {
       course.units[unitIndex] = ensuredUnit;
     }
 
-    const resolvedCourseId = course?.courseId ?? course?.id ?? ensuredUnit?.courseId ?? question.courseId;
-   const resolvedUnitId = ensuredUnit?.unitId ?? ensuredUnit?.id ?? unit.unitId ?? unit.id ?? question.unitId;
+    const resolvedCourseId = CANONICAL_COURSE_TITLE;
+    const resolvedUnitId = normalizedTitle === "介護過程1"
+      ? 10
+      : (ensuredUnit?.unitId ?? ensuredUnit?.id ?? unit.unitId ?? unit.id ?? question.unitId);
     
     if (!resolvedCourseId || !resolvedUnitId) {
       console.error("SAVE BLOCKED: unit id missing", { course, unit: ensuredUnit, question });
@@ -916,7 +928,8 @@ async function saveQuestion(qi) {
 
     const payload = buildQuestionPayload(question, {
       courseId: resolvedCourseId,
-      unitId: resolvedUnitId
+      unitId: resolvedUnitId,
+      unitTitle: normalizedTitle === "介護過程1" ? "介護過程1" : normalizeUnitTitle(ensuredUnit?.title || unit.title)
     });
 
     if (!payload.courseId || !payload.unitId) {
@@ -943,6 +956,10 @@ async function saveQuestion(qi) {
     editingQuestionId = null;
     renderAdmin();
   } catch (error) {
+    if (!question.id) {
+      const rollbackIndex = list.indexOf(question);
+      if (rollbackIndex >= 0) list.splice(rollbackIndex, 1);
+    }
     alert(`保存エラー: ${error.message}`);
   } finally {
     saving = false;
@@ -969,8 +986,7 @@ async function createQuestion(type) {
     return;
   }
 
-  unit.questions.push(question);
-  await saveQuestion(unit.questions.length - 1);
+  await saveQuestion(-1, { question });
 }
 
 async function deleteQuestion(qi) {
@@ -1084,14 +1100,19 @@ async function saveAllImportedQuestions() {
     console.log(`SAVING QUESTION ${i + 1}/${total}`);
 
     try {
-      const ensuredUnit = await ensureUnitWithIds(course, unit);
+      const normalizedTitle = normalizeUnitTitle(unit?.title);
+      const baseCourse = { ...course, title: CANONICAL_COURSE_TITLE, courseId: CANONICAL_COURSE_TITLE, id: CANONICAL_COURSE_TITLE };
+      const unitForEnsure = normalizedTitle === '介護過程1'
+        ? { ...unit, title: '介護過程1', unitId: 10, id: 10, courseId: CANONICAL_COURSE_TITLE }
+        : unit;
+      const ensuredUnit = await ensureUnitWithIds(baseCourse, unitForEnsure);
       if (course?.units?.[item.ui]) {
         course.units[item.ui] = ensuredUnit;
       }
       unit = ensuredUnit;
 
-      const resolvedCourseId = course?.courseId ?? course?.id ?? unit?.courseId ?? question.courseId;
-      const resolvedUnitId = unit?.unitId ?? unit?.id ?? question.unitId;
+      const resolvedCourseId = CANONICAL_COURSE_TITLE;
+      const resolvedUnitId = normalizedTitle === '介護過程1' ? 10 : (unit?.unitId ?? unit?.id ?? question.unitId);
 
       if (!resolvedCourseId || !resolvedUnitId) {
         throw new Error('courseId/unitId missing');
@@ -1102,7 +1123,8 @@ async function saveAllImportedQuestions() {
 
       const payload = buildQuestionPayload(question, {
         courseId: resolvedCourseId,
-        unitId: resolvedUnitId
+        unitId: resolvedUnitId,
+        unitTitle: normalizedTitle === '介護過程1' ? '介護過程1' : normalizeUnitTitle(unit?.title)
       });
 
       const questionId = question?.id;
