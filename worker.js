@@ -836,8 +836,8 @@ function parseIndexedLines(sectionText) {
 
 function parseDeterministicDx(unitTitle, rawText, answerText) {
   const sourceText = pickParseSourceText(rawText, answerText);
-  const blocks = sourceText
-    .split(/(?=^\[(?:TYPE:[^\]]+|CASE)\]\s*$)/m)
+  const blockPattern = /^\[(?:TYPE:[^\]]+|CASE)\][\s\S]*?(?=^\[(?:TYPE:[^\]]+|CASE)\]|(?![\s\S]))/gm;
+  const blocks = (sourceText.match(blockPattern) || [])
     .map((b) => b.trim())
     .filter(Boolean);
   const caseMap = new Map();
