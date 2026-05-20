@@ -864,7 +864,10 @@ function parseDeterministicDx(unitTitle, rawText, answerText) {
     const qid = qidMatch[1].trim();
     const caseRefMatch = block.match(/^\[CASE_REF:([^\]]+)\]\s*$/im);
     const caseRef = caseRefMatch ? caseRefMatch[1].trim() : "";
-    const baseQuestion = getTagBody(block, "問題文:");
+    const questionMatch = block.match(
+      /問題文:\s*([\s\S]*?)(?=\n\[(?:CHOICES|ITEMS|ANSWER|TYPE:[^\]]+|CASE)\]|\s*$)/
+    );
+    const baseQuestion = questionMatch ? questionMatch[1].trim() : "";
     const casePrefix = caseRef && caseMap.has(caseRef) ? `${caseMap.get(caseRef)}\n\n` : "";
     const question = `${casePrefix}${baseQuestion}`.trim();
     const answerRaw = getTagBody(block, "ANSWER");
