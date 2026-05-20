@@ -1219,6 +1219,118 @@ async function saveAllImportedQuestions() {
   alert('JSON保存が完了しました。');
 }
 
+async function saveDxImportedUnits() {
+  if (saving) return;
+  if (!dxImportState?.parsedUnits?.length) {
+    throw new Error("DX解析結果がありません。");
+  }
+
+  saving = true;
+  const errors = [];
+  const targetCounts = new Map();
+
+  try {
+    const rawExisting = await api('/api/questions?admin=1');
+    const existingDb = normalizeDatabase(rawExisting);
+    const existingBySignature = new Map();
+
+    (existingDb.courses || []).forEach((course) => {
+      (course.units || []).forEach((unit) => {
+        const unitTitle = normalizeUnitTitle(unit?.title);
+        const sigMap = new Map();
+        (unit.questions || []).forEach((question) => {
+          sigMap.set(questionSignature(question), question?.id);
+        });
+        existingBySignature.set(`${CANONICAL_COURSE_TITLE}::${unitTitle}`, sigMap);
+      });
+    });
+
+    for (const parsedUnit of dxImportState.parsedUnits) {
+      const unitTitle = normalizeUnitTitle(parsedUnit?.unitTitle);
+      if (!unitTitle) continue;
+
+      const parsedQuestions = Array.isArray(parsedUnit?.questions) ? parsedUnit.questions : [];
+      targetCounts.set(unitTitle, parsedQuestions.length);
+
+      const sigMap = existingBySignature.get(`${CANONICAL_COURSE_TITLE}::${unitTitle}`) || new Map();
+
+      for (const rawQuestion of parsedQuestions) {
+        const normalizedQuestion = normalizeQuestion(rawQuestion, CANONICAL_COURSE_TITLE, null);
+        const signature = questionSignature(normalizedQuestion);
+        const existingId = sigMap.get(signature);
+        const hasPersistentId = existingId !== undefined && existingId !== null && existingId !== "";
+
+        const payload = buildQuestionPayload(normalizedQuestion, {
+          courseId: CANONICAL_COURSE_TITLE,
+          unitTitle
+        });
+        payload.course = CANONICAL_COURSE_TITLE;
+        payload.unit = unitTitle;
+        payload.unitTitle = unitTitle;
+        delete payload.id;
+
+        const path = hasPersistentId ? `/api/questions/${existingId}` : '/api/questions';
+        const method = hasPersistentId ? 'PUT' : 'POST';
+
+        const response = await fetch(`${API_BASE}${path}`, {
+          method,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const contentType = response.headers.get('content-type') || '';
+        const body = contentType.includes('application/json') ? await response.json() : await response.text();
+
+        if (!response.ok) {
+          const message = typeof body === 'string'
+            ? body
+            : (body?.message || body?.error || `${response.status} ${response.statusText}`);
+          throw new Error(message);
+        }
+
+        if (!body?.question) {
+          throw new Error('response.question is null');
+        }
+      }
+    }
+
+    const afterRaw = await api('/api/questions?admin=1');
+    const afterDb = normalizeDatabase(afterRaw);
+    const actualCounts = new Map();
+
+    (afterDb.courses || []).forEach((course) => {
+      if (norm(course?.title) !== CANONICAL_COURSE_TITLE) return;
+      (course.units || []).forEach((unit) => {
+        const unitTitle = normalizeUnitTitle(unit?.title);
+        actualCounts.set(unitTitle, Array.isArray(unit?.questions) ? unit.questions.length : 0);
+      });
+    });
+
+    const mismatches = [];
+    targetCounts.forEach((expected, unitTitle) => {
+      const actual = Number(actualCounts.get(unitTitle) || 0);
+      if (actual !== Number(expected)) {
+        mismatches.push(`${unitTitle}: expected=${expected}, actual=${actual}`);
+      }
+    });
+
+    if (mismatches.length) {
+      throw new Error(`DX保存検証エラー: ${mismatches.join(' / ')}`);
+    }
+
+    await loadData(true);
+    renderAdmin();
+  } catch (error) {
+    errors.push(error?.message || String(error));
+  } finally {
+    saving = false;
+  }
+
+  if (errors.length) {
+    throw new Error(errors.join(' / '));
+  }
+}
+
 
 document.addEventListener("click", async (event) => {
   const target = event.target.closest("[data-act]");
@@ -1476,13 +1588,11 @@ else if (action === "back-units") {
     if (!confirm(isReplaceMode
       ? "既存問題を全置換して本番反映します。よろしいですか？"
       : "既存データを残したまま追加反映します。よろしいですか？")) return;
-    if (isReplaceMode) {
-      applyDxPreviewToDb();
-      await api("/api/init-db?mode=replace");
-      await saveAllImportedQuestions();
-    } else {
-      await appendDxPreviewToDb();
-      await saveAllImportedQuestions();
+    try {
+      await saveDxImportedUnits();
+      alert("DX承認反映が完了しました。");
+    } catch (error) {
+      alert(`DX承認反映エラー: ${error.message}`);
     }
   } else if (action === "img-clear") {
     const preview = document.getElementById("img-preview");
