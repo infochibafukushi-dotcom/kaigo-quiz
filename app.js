@@ -793,6 +793,10 @@ async function applyEditorToQuestion(question) {
 
 function buildQuestionPayload(question, context = {}) {
   const rawImage = String(question.imageData || "").trim();
+  const unitTitle = normalizeUnitTitle(
+    context.unitTitle ?? context.unit ?? context.title ?? question.unit ?? question.unitTitle ?? ""
+  );
+
   const payload = {
     id: question.id,
     type: norm(question.type || "fill"),
@@ -803,17 +807,21 @@ function buildQuestionPayload(question, context = {}) {
     explanation: norm(question.explanation),
     imageUrl: rawImage,
     imageData: rawImage,
-    blankCount: Math.max(1, Number(question.blankCount) || 1)
+    blankCount: Math.max(1, Number(question.blankCount) || 1),
+    course: CANONICAL_COURSE_TITLE,
+    unit: unitTitle,
+    unitTitle,
+    title: unitTitle
   };
 
- const courseId = context.courseId ?? question.courseId;
-const unitId = context.unitId ?? question.unitId;
+  const courseId = context.courseId ?? question.courseId;
+  const unitId = context.unitId ?? question.unitId;
 
   if (courseId !== undefined && courseId !== null && courseId !== "") payload.courseId = courseId;
   if (unitId !== undefined && unitId !== null && unitId !== "") payload.unitId = unitId;
 
   Object.keys(payload).forEach((key) => {
-    if (payload[key] === undefined || payload[key] === null) {
+    if (payload[key] === undefined || payload[key] === null || payload[key] === "") {
       delete payload[key];
     }
   });
@@ -854,7 +862,7 @@ async function ensureUnitWithIds(course, unit) {
   };
 }
 
-async function saveQuestion(qi) {
+async function saveQuestion(qi, options = {}) {
   if (saving) return;
 
   const unit = curUnit();
@@ -864,9 +872,11 @@ async function saveQuestion(qi) {
   }
 
   const list = unit.questions || [];
-  const question = (editingQuestionId != null
-    ? list.find((item) => String(item?.id) === String(editingQuestionId))
-    : null) || list[qi];
+  const question = options.question || (
+    (editingQuestionId != null
+      ? list.find((item) => String(item?.id) === String(editingQuestionId))
+      : null) || list[qi]
+  );
 
   if (!question) {
     alert("保存対象の問題が見つかりません。");
@@ -896,15 +906,31 @@ async function saveQuestion(qi) {
 
   try {
     const course = curCourse();
-    const ensuredUnit = await ensureUnitWithIds(course, unit);
+    const normalizedTitle = normalizeUnitTitle(unit.title);
+    const forceKaigoKatei1 = normalizedTitle === "介護過程1";
+
+    const baseCourse = {
+      ...course,
+      title: CANONICAL_COURSE_TITLE,
+      courseId: CANONICAL_COURSE_TITLE,
+      id: CANONICAL_COURSE_TITLE
+    };
+
+    const unitForEnsure = forceKaigoKatei1
+      ? { ...unit, title: "介護過程1", unitId: 10, id: 10, courseId: CANONICAL_COURSE_TITLE }
+      : unit;
+
+    const ensuredUnit = await ensureUnitWithIds(baseCourse, unitForEnsure);
 
     if (course?.units?.[unitIndex]) {
       course.units[unitIndex] = ensuredUnit;
     }
 
-    const resolvedCourseId = course?.courseId ?? course?.id ?? ensuredUnit?.courseId ?? question.courseId;
-   const resolvedUnitId = ensuredUnit?.unitId ?? ensuredUnit?.id ?? unit.unitId ?? unit.id ?? question.unitId;
-    
+    const resolvedCourseId = CANONICAL_COURSE_TITLE;
+    const resolvedUnitId = forceKaigoKatei1
+      ? 10
+      : (ensuredUnit?.unitId ?? ensuredUnit?.id ?? unit.unitId ?? unit.id ?? question.unitId);
+
     if (!resolvedCourseId || !resolvedUnitId) {
       console.error("SAVE BLOCKED: unit id missing", { course, unit: ensuredUnit, question });
       alert("保存先単元IDがありません。単元を作成し直してください。");
@@ -916,7 +942,8 @@ async function saveQuestion(qi) {
 
     const payload = buildQuestionPayload(question, {
       courseId: resolvedCourseId,
-      unitId: resolvedUnitId
+      unitId: resolvedUnitId,
+      unitTitle: forceKaigoKatei1 ? "介護過程1" : normalizeUnitTitle(ensuredUnit?.title || unit.title)
     });
 
     if (!payload.courseId || !payload.unitId) {
@@ -933,7 +960,6 @@ async function saveQuestion(qi) {
     });
 
     const text = await response.text();
-
     if (!response.ok) {
       console.error(text);
       throw new Error(`${response.status} ${response.statusText}`);
@@ -943,6 +969,10 @@ async function saveQuestion(qi) {
     editingQuestionId = null;
     renderAdmin();
   } catch (error) {
+    if (!question.id) {
+      const rollbackIndex = list.indexOf(question);
+      if (rollbackIndex >= 0) list.splice(rollbackIndex, 1);
+    }
     alert(`保存エラー: ${error.message}`);
   } finally {
     saving = false;
@@ -956,11 +986,11 @@ async function createQuestion(type) {
     return;
   }
 
- const question = normalizeQuestion({
-  type,
-  courseId: curCourse()?.courseId ?? curCourse()?.id,
-  unitId: curUnit()?.unitId ?? curUnit()?.id
-});
+  const question = normalizeQuestion({
+    type,
+    courseId: curCourse()?.courseId ?? curCourse()?.id,
+    unitId: curUnit()?.unitId ?? curUnit()?.id
+  });
 
   try {
     await applyEditorToQuestion(question);
@@ -969,9 +999,9 @@ async function createQuestion(type) {
     return;
   }
 
-  unit.questions.push(question);
-  await saveQuestion(unit.questions.length - 1);
+  await saveQuestion(-1, { question });
 }
+
 
 async function deleteQuestion(qi) {
   if (deleting) return;
@@ -1084,14 +1114,29 @@ async function saveAllImportedQuestions() {
     console.log(`SAVING QUESTION ${i + 1}/${total}`);
 
     try {
-      const ensuredUnit = await ensureUnitWithIds(course, unit);
+      const normalizedTitle = normalizeUnitTitle(unit?.title);
+      const forceKaigoKatei1 = normalizedTitle === '介護過程1';
+
+      const baseCourse = {
+        ...course,
+        title: CANONICAL_COURSE_TITLE,
+        courseId: CANONICAL_COURSE_TITLE,
+        id: CANONICAL_COURSE_TITLE
+      };
+
+      const unitForEnsure = forceKaigoKatei1
+        ? { ...unit, title: '介護過程1', unitId: 10, id: 10, courseId: CANONICAL_COURSE_TITLE }
+        : unit;
+
+      const ensuredUnit = await ensureUnitWithIds(baseCourse, unitForEnsure);
+
       if (course?.units?.[item.ui]) {
         course.units[item.ui] = ensuredUnit;
       }
       unit = ensuredUnit;
 
-      const resolvedCourseId = course?.courseId ?? course?.id ?? unit?.courseId ?? question.courseId;
-      const resolvedUnitId = unit?.unitId ?? unit?.id ?? question.unitId;
+      const resolvedCourseId = CANONICAL_COURSE_TITLE;
+      const resolvedUnitId = forceKaigoKatei1 ? 10 : (unit?.unitId ?? unit?.id ?? question.unitId);
 
       if (!resolvedCourseId || !resolvedUnitId) {
         throw new Error('courseId/unitId missing');
@@ -1102,7 +1147,8 @@ async function saveAllImportedQuestions() {
 
       const payload = buildQuestionPayload(question, {
         courseId: resolvedCourseId,
-        unitId: resolvedUnitId
+        unitId: resolvedUnitId,
+        unitTitle: forceKaigoKatei1 ? '介護過程1' : normalizeUnitTitle(unit?.title)
       });
 
       const questionId = question?.id;
@@ -1172,6 +1218,120 @@ async function saveAllImportedQuestions() {
 
   alert('JSON保存が完了しました。');
 }
+
+async function saveDxImportedUnits() {
+  if (saving) return;
+  if (!dxImportState?.parsedUnits?.length) {
+    throw new Error("DX解析結果がありません。");
+  }
+
+  saving = true;
+  const errors = [];
+  const targetCounts = new Map();
+
+  try {
+    const rawExisting = await api('/api/questions?admin=1');
+    const existingDb = normalizeDatabase(rawExisting);
+    const existingBySignature = new Map();
+
+    (existingDb.courses || []).forEach((course) => {
+      (course.units || []).forEach((unit) => {
+        const unitTitle = normalizeUnitTitle(unit?.title);
+        const sigMap = new Map();
+        (unit.questions || []).forEach((question) => {
+          sigMap.set(questionSignature(question), question?.id);
+        });
+        existingBySignature.set(`${CANONICAL_COURSE_TITLE}::${unitTitle}`, sigMap);
+      });
+    });
+
+    for (const parsedUnit of dxImportState.parsedUnits) {
+      const unitTitle = normalizeUnitTitle(parsedUnit?.unitTitle);
+      if (!unitTitle) continue;
+
+      const parsedQuestions = Array.isArray(parsedUnit?.questions) ? parsedUnit.questions : [];
+      targetCounts.set(unitTitle, parsedQuestions.length);
+
+      const sigMap = existingBySignature.get(`${CANONICAL_COURSE_TITLE}::${unitTitle}`) || new Map();
+
+      for (const rawQuestion of parsedQuestions) {
+        const normalizedQuestion = normalizeQuestion(rawQuestion, CANONICAL_COURSE_TITLE, null);
+        const signature = questionSignature(normalizedQuestion);
+        const existingId = sigMap.get(signature);
+        const hasPersistentId = existingId !== undefined && existingId !== null && existingId !== "";
+
+        const payload = buildQuestionPayload(normalizedQuestion, {
+          courseId: CANONICAL_COURSE_TITLE,
+          unitTitle
+        });
+        payload.course = CANONICAL_COURSE_TITLE;
+        payload.unit = unitTitle;
+        payload.unitTitle = unitTitle;
+        delete payload.id;
+
+        const path = hasPersistentId ? `/api/questions/${existingId}` : '/api/questions';
+        const method = hasPersistentId ? 'PUT' : 'POST';
+
+        const response = await fetch(`${API_BASE}${path}`, {
+          method,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const contentType = response.headers.get('content-type') || '';
+        const body = contentType.includes('application/json') ? await response.json() : await response.text();
+
+        if (!response.ok) {
+          const message = typeof body === 'string'
+            ? body
+            : (body?.message || body?.error || `${response.status} ${response.statusText}`);
+          throw new Error(message);
+        }
+
+        if (!body?.question) {
+          throw new Error('response.question is null');
+        }
+      }
+    }
+
+    const afterRaw = await api('/api/questions?admin=1');
+    const afterDb = normalizeDatabase(afterRaw);
+    const actualCounts = new Map();
+
+    (afterDb.courses || []).forEach((course) => {
+      if (norm(course?.title) !== CANONICAL_COURSE_TITLE) return;
+      (course.units || []).forEach((unit) => {
+        const unitTitle = normalizeUnitTitle(unit?.title);
+        actualCounts.set(unitTitle, Array.isArray(unit?.questions) ? unit.questions.length : 0);
+      });
+    });
+
+    const mismatches = [];
+    targetCounts.forEach((expected, unitTitle) => {
+      const actual = Number(actualCounts.get(unitTitle) || 0);
+      if (actual !== Number(expected)) {
+        mismatches.push(`${unitTitle}: expected=${expected}, actual=${actual}`);
+      }
+    });
+
+    if (mismatches.length) {
+      throw new Error(`DX保存検証エラー: ${mismatches.join(' / ')}`);
+    }
+
+    await loadData(true);
+    renderAdmin();
+  } catch (error) {
+    errors.push(error?.message || String(error));
+  } finally {
+    saving = false;
+  }
+
+  if (errors.length) {
+    throw new Error(errors.join(' / '));
+  }
+}
+
+
 document.addEventListener("click", async (event) => {
   const target = event.target.closest("[data-act]");
   if (!target) return;
@@ -1428,13 +1588,11 @@ else if (action === "back-units") {
     if (!confirm(isReplaceMode
       ? "既存問題を全置換して本番反映します。よろしいですか？"
       : "既存データを残したまま追加反映します。よろしいですか？")) return;
-    if (isReplaceMode) {
-      applyDxPreviewToDb();
-      await api("/api/init-db?mode=replace");
-      await saveAllImportedQuestions();
-    } else {
-      await appendDxPreviewToDb();
-      await saveAllImportedQuestions();
+    try {
+      await saveDxImportedUnits();
+      alert("DX承認反映が完了しました。");
+    } catch (error) {
+      alert(`DX承認反映エラー: ${error.message}`);
     }
   } else if (action === "img-clear") {
     const preview = document.getElementById("img-preview");
