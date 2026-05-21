@@ -401,7 +401,7 @@ function renderQuestion() {
       <button data-act="ans-single" data-v="×">×</button>
     `;
   } else if (question.type === "choice") {
-    (question.choices || []).forEach((choice, idx) =>
+    (question.choices || []).forEach((choice, idx) => {
       html += `<button data-act="ans-single" data-v="${esc(choice)}">${idx + 1}. ${esc(choice)}</button>`;
     });
   } else if (question.type === "multi") {
