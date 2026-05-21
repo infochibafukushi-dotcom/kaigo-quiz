@@ -2032,7 +2032,7 @@ function evaluateDxQualityGate(stats, mode) {
   console.log("DX QUALITY GATE NORMALIZED:", normalizedMode);
 
   if (normalizedMode === "append" || Number(stats.unitCount || 0) < 11) {
-  if (Number(stats.choiceMissing) !== 0) failures.push(`choices欠落NG(${stats.choiceMissing})`);
+  if (Number(stats.choicesMissing) !== 0)failures.push(`choices欠落NG(${stats.choicesMissing})`);
   if (Number(stats.blankCountMismatch) !== 0) failures.push(`blankCount不整合NG(${stats.blankCountMismatch})`);
   if (Number(stats.workerIssues) !== 0) failures.push(`worker issues NG(${stats.workerIssues})`);
   return { ok: failures.length === 0, failures };
