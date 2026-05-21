@@ -185,29 +185,28 @@ function normalizeDatabase(rawData) {
     };
   });
 
-  if (courses.length === 0) {
-    courses = [{
-      id: null,
-      courseId: null,
-      title: CANONICAL_COURSE_TITLE,
-      units: []
-    }];
-  }
+  const targetCourse = courses.find(
+    (course) => norm(course.title) === norm(CANONICAL_COURSE_TITLE)
+  );
 
-  courses.forEach((course) => {
+  if (targetCourse) {
     const merged = new Map();
 
-    (course.units || []).forEach((unit) => {
+    (targetCourse.units || []).forEach((unit) => {
       const title = normalizeUnitTitle(unit.title);
       if (!title) return;
+
       if (!merged.has(title)) {
-        merged.set(title, { ...unit, title, questions: Array.isArray(unit.questions) ? unit.questions : [] });
+        merged.set(title, {
+          ...unit,
+          title,
+          questions: Array.isArray(unit.questions) ? unit.questions : []
+        });
       } else {
         const existing = merged.get(title);
-        existing.questions = [...(existing.questions || []), ...(unit.questions || [])];
+        existing.questions = [...existing.questions, ...(unit.questions || [])];
         existing.id = existing.id || unit.id;
         existing.unitId = existing.unitId || unit.unitId;
-        existing.isVisible = existing.isVisible !== false || unit.isVisible !== false;
       }
     });
 
@@ -223,8 +222,23 @@ function normalizeDatabase(rawData) {
       }
     });
 
-    course.units = sortUnitsByCanonicalOrder([...merged.values()]);
-  });
+    targetCourse.units = sortUnitsByCanonicalOrder([...merged.values()]);
+  }
+
+  if (courses.length === 0) {
+    courses = [{
+      id: null,
+      courseId: null,
+      title: CANONICAL_COURSE_TITLE,
+      units: CANONICAL_UNITS.map((title) => ({
+        id: null,
+        unitId: null,
+        title,
+        isVisible: true,
+        questions: []
+      }))
+    }];
+  }
 
   return {
     appTitle: rawData?.appTitle || "カイゴクイズ",
