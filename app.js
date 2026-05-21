@@ -401,16 +401,17 @@ function renderQuestion() {
       <button data-act="ans-single" data-v="×">×</button>
     `;
   } else if (question.type === "choice") {
-    (question.choices || []).forEach((choice) => {
-      html += `<button data-act="ans-single" data-v="${esc(choice)}">${esc(choice)}</button>`;
+    (question.choices || []).forEach((choice, idx) =>
+      html += `<button data-act="ans-single" data-v="${esc(choice)}">${idx + 1}. ${esc(choice)}</button>`;
     });
   } else if (question.type === "multi") {
-    (question.choices || []).forEach((choice) => {
-      html += `
-        <label>
-          <input type="checkbox" class="multi-answer" value="${esc(choice)}">
-          ${esc(choice)}
-        </label>
+ (question.choices || []).forEach((choice, idx) => {
+  html += `
+    <label>
+      <input type="checkbox" class="multi-answer" value="${esc(choice)}">
+      ${idx + 1}. ${esc(choice)}
+    </label>
+  `;  
       `;
     });
     html += `<button data-act="ans-multi">回答</button>`;
@@ -2030,25 +2031,23 @@ function evaluateDxQualityGate(stats, mode) {
   console.log("DX QUALITY GATE MODE:", mode);
   console.log("DX QUALITY GATE NORMALIZED:", normalizedMode);
 
-  if (normalizedMode === "append") {
-    if (Number(stats.choicesMissing) !== 0) failures.push(`choices欠落NG(${stats.choicesMissing})`);
-    if (Number(stats.blankCountMismatch) !== 0) failures.push(`blankCount不整合NG(${stats.blankCountMismatch})`);
-    if (Number(stats.workerIssues) !== 0) failures.push(`worker issues NG(${stats.workerIssues})`);
-    return { ok: failures.length === 0, failures };
-  }
+  if (normalizedMode === "append" || Number(stats.unitCount || 0) < 11) {
+  if (Number(stats.choiceMissing) !== 0) failures.push(`choices欠落NG(${stats.choiceMissing})`);
+  if (Number(stats.blankCountMismatch) !== 0) failures.push(`blankCount不整合NG(${stats.blankCountMismatch})`);
+  if (Number(stats.workerIssues) !== 0) failures.push(`worker issues NG(${stats.workerIssues})`);
+  return { ok: failures.length === 0, failures };
+}
 
-  console.log("REPLACE GATE ENTERED");
-  if (Number(stats.unitCountMismatch) !== 0) failures.push(`unitCount不一致NG(${stats.unitCountMismatch})`);
-  if (Number(stats.unitCount) !== 11) failures.push(`11単元完走NG(${stats.unitCount || 0}/11)`);
+if (Number(stats.unitCountMismatch) !== 0) failures.push(`unitCount不一致NG(${stats.unitCountMismatch})`);
+if (Number(stats.unitCount || 0) !== 11) failures.push(`11単元完走NG(${stats.unitCount || 0}/11)`);
 
-  const requiredTypes = ["ox", "choice", "multi", "fill", "fill_multi", "combo", "case"];
-  requiredTypes.forEach((type) => {
-    const count = Number(stats.typeCounts?.[type] || 0);
-    if (count <= 0) failures.push(`type=${type} 0件`);
-  });
+const requiredTypes = ["ox", "choice", "multi", "fill", "fill_multi", "combo", "case"];
+requiredTypes.forEach((type) => {
+  const count = Number(stats.typeCounts?.[type] || 0);
+  if (count <= 0) failures.push(`type=${type} 0件`);
+});
 
-  if (!stats.skippedShogai?.q1 || !stats.skippedShogai?.q8) failures.push("障害の理解固定チェックNG");
-
+if (!stats.skippedShogai?.q1 || !stats.skippedShogai?.q8) failures.push("障害の理解固定チェックNG");
   return { ok: failures.length === 0, failures };
 }
 
