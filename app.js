@@ -2023,31 +2023,50 @@ function buildExpectedUnitCountsFromCurrentDb() {
 
 function evaluateDxQualityGate(stats, mode) {
   const failures = [];
+
   if (!stats || typeof stats !== "object") {
     return { ok: false, failures: ["stats missing"] };
   }
 
   const normalizedMode = mode === "append" ? "append" : "replace";
-  console.log("DX QUALITY GATE MODE:", mode);
-  console.log("DX QUALITY GATE NORMALIZED:", normalizedMode);
 
   if (normalizedMode === "append" || Number(stats.unitCount || 0) < 11) {
-  if (Number(stats.choicesMissing) !== 0)failures.push(`choices欠落NG(${stats.choicesMissing})`);
-  if (Number(stats.blankCountMismatch) !== 0) failures.push(`blankCount不整合NG(${stats.blankCountMismatch})`);
-  if (Number(stats.workerIssues) !== 0) failures.push(`worker issues NG(${stats.workerIssues})`);
-  return { ok: failures.length === 0, failures };
-}
+    if (Number(stats.choicesMissing || 0) !== 0) {
+      failures.push(`choices欠落NG(${stats.choicesMissing || 0})`);
+    }
 
-if (Number(stats.unitCountMismatch) !== 0) failures.push(`unitCount不一致NG(${stats.unitCountMismatch})`);
-if (Number(stats.unitCount || 0) !== 11) failures.push(`11単元完走NG(${stats.unitCount || 0}/11)`);
+    if (Number(stats.blankCountMismatch || 0) !== 0) {
+      failures.push(`blankCount不整合NG(${stats.blankCountMismatch || 0})`);
+    }
 
-const requiredTypes = ["ox", "choice", "multi", "fill", "fill_multi", "combo", "case"];
-requiredTypes.forEach((type) => {
-  const count = Number(stats.typeCounts?.[type] || 0);
-  if (count <= 0) failures.push(`type=${type} 0件`);
-});
+    if (Number(stats.workerIssues || 0) !== 0) {
+      failures.push(`worker issues NG(${stats.workerIssues || 0})`);
+    }
 
-if (!stats.skippedShogai?.q1 || !stats.skippedShogai?.q8) failures.push("障害の理解固定チェックNG");
+    return { ok: failures.length === 0, failures };
+  }
+
+  if (Number(stats.unitCountMismatch || 0) !== 0) {
+    failures.push(`unitCount不一致NG(${stats.unitCountMismatch || 0})`);
+  }
+
+  if (Number(stats.unitCount || 0) !== 11) {
+    failures.push(`11単元完走NG(${stats.unitCount || 0}/11)`);
+  }
+
+  const requiredTypes = ["ox", "choice", "multi", "fill", "fill_multi", "combo", "case"];
+
+  requiredTypes.forEach((type) => {
+    const count = Number(stats.typeCounts?.[type] || 0);
+    if (count <= 0) {
+      failures.push(`type=${type} 0件`);
+    }
+  });
+
+  if (!stats.skippedShogai?.q1 || !stats.skippedShogai?.q8) {
+    failures.push("障害の理解固定チェックNG");
+  }
+
   return { ok: failures.length === 0, failures };
 }
 
