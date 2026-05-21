@@ -412,7 +412,7 @@ function renderQuestion() {
       ${idx + 1}. ${esc(choice)}
     </label>
   `;  
-      `;
+
     });
     html += `<button data-act="ans-multi">回答</button>`;
   } else if (question.type === "fill") {
